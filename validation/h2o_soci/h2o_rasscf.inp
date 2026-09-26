@@ -1,0 +1,21 @@
+&GATEWAY
+  Title = Title = Water SOCI(8,18) 
+  Coord = h2o.xyz
+  Basis = 6-31G*
+  Group = c1
+
+&SEWARD
+
+&SCF
+  QNRThreshold = 0.0
+  Threshold = 1.0d-10 1.0d-10 1.0d-10 1.0d-10
+
+&RASSCF
+  Spin = 1
+  Symmetry = 1
+  Inactive = 1
+  RAS1 = 2
+  RAS2 = 2
+  RAS3 = 14
+  nActEl = 8 2 2
+  CIONLY

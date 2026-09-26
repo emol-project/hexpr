@@ -1,0 +1,52 @@
+* OpenMolcas reference for H2O / 6-31G* SOCI(8,17) -- spherical d, 4e4o reference (RAS2=4).
+*
+* The 6-31G* d shell is taken in 5 real spherical-harmonic components (not 6
+* Cartesian) -> 18 AO / 17 active, matching the PySCF / Psi4 / Fermi.jl spherical
+* runs. The SOCI reference space is RAS1=2 / RAS2=4 / RAS3=11: a 4-orbital
+* full-CI reference (RAS2=4) with singles+doubles into RAS3 (max 2 particles) and
+* out of RAS1 (max 2 holes), i.e. nActEl = 8 2 2. C1 symmetry (no Group/Symmetry card).
+*
+* (An earlier RAS2=2 partition gave SOCI -76.19536401; widening the reference to
+* RAS2=4 lowers it by ~1.75 mHa to -76.19711710, recovering multiconfigurational
+* character the smaller reference truncated away. The 4e4o CI has 17,685 CSFs.)
+*
+* OpenMolcas's native GATEWAY "Basis set ... End of basis" format is used so the
+* "Spherical d" card is honored. That native format ignores the Angstrom card, so
+* the coordinates below are in bohr (0.7572157 / 0.5865358 Angstrom *
+* 1.8897261255 bohr/Angstrom), reproducing NRE = 9.1892096217.
+*
+* This deck is self-contained: copy everything from &GATEWAY through CIONLY into a
+* file (e.g. h2o_rasscf.inp) and run it with pymolcas. No external .xyz is needed.
+
+&GATEWAY
+Title
+ Water SOCI(8,17) spherical, 4e4o reference
+Basis set
+O.6-31G*....
+Spherical d
+O    0.0000000000   0.0000000000   0.0000000000
+End of basis
+Basis set
+H.6-31G*....
+H1   0.0000000000   1.4309302909   1.1083920248
+H2   0.0000000000  -1.4309302909   1.1083920248
+End of basis
+&SEWARD
+&SCF
+  QNRThreshold = 0.0
+  Threshold = 1.0d-10 1.0d-10 1.0d-10 1.0d-10
+&RASSCF
+  Spin = 1
+  Symmetry = 1
+  Inactive = 1
+  RAS1 = 2
+  RAS2 = 4
+  RAS3 = 11
+  nActEl = 8 2 2
+  CIONLY
+
+* Reference values (Hartree)
+* --------------------------
+* Nuclear repulsion:  9.1892096217
+* RHF energy:        -76.0091065429
+* SOCI energy:       -76.19711710    (RASSCF root 1)

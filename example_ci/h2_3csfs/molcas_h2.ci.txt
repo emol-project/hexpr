@@ -1,0 +1,35 @@
+# OpenMolcas reference for H2 / STO-3G CAS(2,2)
+#
+# Geometry (h2.xyz)
+# -----------------
+2
+H2 STO-3G Equilibrium Geometry
+H   0.00000000   0.00000000   0.00000000
+H   0.00000000   0.00000000   0.74140000
+
+
+# OpenMolcas input (h2.ci.input)
+# ------------------------------
+&GATEWAY
+ Title = H2 STO-3G CAS(2,2) CI-Only
+ Coord = h2.xyz
+ Basis = STO-3G
+ Group = c1
+&SEWARD
+&SCF
+&RASSCF
+ Title = H2 CI-Only calculation
+ Spin = 1
+ Symmetry = 1
+ nActEl = 2 0 0
+ Inactive = 0
+ Ras2 = 2
+ CIRoot = 3 3 1
+ CIONly
+
+
+# Reference energies (RASSCF root totals, Hartree)
+# ------------------------------------------------
+Root 1:  -1.13727017
+Root 2:  -0.16990140
+Root 3:  +0.47983610

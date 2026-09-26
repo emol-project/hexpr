@@ -1,0 +1,95 @@
+reference_csfset/ -- frozen CSFSET pair-eval oracle
+====================================================
+
+Scope and status
+----------------
+Add-only oracle frozen for the v1.0.0 release cycle (see
+docs/SPEC_CSFSET_ORACLE.md, which is removed before the public v1.0.0 cut).
+These files record the EXACT output the CURRENT (commit cb8a3f3) sub-DRT
+CSFSET path produces for a representative set of CSFSET inputs. They change
+no library code: the generator and consumer test use the public API only
+(hexpr_drt_from_csfset / hexpr_subspace_eval / hexpr_pair_eval).
+
+Why this exists
+---------------
+A future, internal change will replace CSFSET per-pair evaluation (today:
+build a sub-DRT per pair) with a DRT-free direct per-pair L_k enumerator
+(deferred to after v1.0.0). That rewrite needs a trusted baseline to diff
+against. No committed artifact captured CSFSET arbitrary-input pair outputs
+before this, so these files freeze the current behavior while the trusted
+path exists. c/tests/test_csfset_pair.c re-runs every case and asserts a
+match; the SAME unchanged test later guards that the rewrite reproduces the
+frozen baseline byte/numeric-for-byte.
+
+Trust basis -- what this oracle does and does NOT anchor
+--------------------------------------------------------
+This oracle is REGRESSION protection, not a physics proof.
+
+  * Physical correctness is anchored ELSEWHERE and already stands: the
+    per-pair coefficient is a path-only pure function (hmlkva);
+    reference_pair/ (RubyRef-generated, SOCI/FOCI) anchors that coefficient
+    kernel via test_pair_*; and end-to-end CI energies are validated against
+    OpenMolcas to 1e-8 Ha (validation/). CSFSET pairs reuse the same kernel,
+    so they inherit that anchoring.
+  * This oracle anchors the CSFSET selection/indexing CONTRACT: it freezes
+    the exact (bra_pos, ket_pos, ij, pqrs, coef) the current C path emits, in
+    the input-order directional contract established by cb8a3f3, so the future
+    rewrite can be proven to preserve that behavior.
+
+RubyRef was considered as an alternative oracle source. It computes CSFSET
+via the same sub-DRT algorithm but emits CANONICAL, symmetric indices with no
+input-order contract, so using it as the contract baseline would require a
+reconciliation layer -- itself a new error source. Physical-coefficient
+confidence already comes from reference_pair + OpenMolcas, so the C-path
+oracle is used for the contract and no RubyRef reconciliation layer is built.
+
+The cases
+---------
+  O1   all 20 CSFs of s_full_4o4e, canonical order (subspace; full+one).
+       Cross-checked against reference_pair/s_full_4o4e (Hermitian first-wins;
+       638 unique keys, max|dcoef| = 0).
+  O2   [uefd, eudf] (norb 4): non-canonical input order + canonical superset
+       (M>N); pair + subspace; full+one.
+  O5   [eeff, eeff] (norb 4): duplicate input row (N>M canonical dedup);
+       pair + subspace; full.
+  OF   9-CSF subset of s_foci_mid (core2/act2/ext2, nve6, FOCI), input order;
+       subspace; full+one. Source rows (0-based) 0,5,13,16,21,29,32,37,40:
+         0  ufeudd   5  ufuedd  13 uffeed  (core hole at orb0)
+         16 fueudd  21 fuuedd  29 fufeed   (core hole at orb1)
+         32 ffeeud  37 ffueed  40 fffeee   (cores full)
+       spanning both core-hole sectors plus external particles, with the
+       no-external reference CSF (40).
+  OFs  the SAME 9 OF rows, deliberately shuffled (40,16,5,32,0,29,13,37,21);
+       subspace; full. Input-order contract: OFs yields the identical canonical
+       (ij,pqrs,coef) multiset as OF -- only bra_pos/ket_pos labels differ.
+  OS   9-CSF subset of s_soci_mid (core2/act2/ext2, nve6, SOCI), input order;
+       subspace; full+one. Source rows (0-based) 0,3,15,16,26,29,59,92,101:
+         0   efefef   3  efuudd                 (single core hole, orb0)
+         15  uuefdd  16  uuuddd  26 udefef  29 uduudd  (double-core-hole sector)
+         59  feefef                              (single core hole, orb1)
+         92  ffeeef  101 fffeee                  (cores full)
+
+File format (self-describing)
+-----------------------------
+  norb  <n>
+  ncsfs <N>
+  csf <i>  <step bytes ...>          # input row i, INPUT order (E/U/D/F=0/1/2/3)
+  which full|one
+  nterms <count>
+  # bra_pos ket_pos ij pqrs coef
+  <bra_pos> <ket_pos> <ij> <pqrs> <coef>
+  ...
+
+  * bra_pos/ket_pos are INPUT positions (0..N-1): the input-order contract.
+  * ij is the canonical triangular bra/ket index; pqrs is the binary-API
+    integral key (0-based). Both as the C API returns them.
+  * coef printed "%+.16e" (17 significant digits -> lossless double round-trip).
+  * Rows sorted by (bra_pos, ket_pos, ij, pqrs), with a stable emit-order
+    tiebreak. The consumer applies the identical sort and compares coef
+    bit-exact (==) -- same code path today.
+
+Regenerating (transparency only; the committed files ARE the oracle)
+--------------------------------------------------------------------
+  make -C c/tests gen-csfset-oracle      # rewrites reference_csfset/*.txt
+The test does not require regeneration:
+  make -C c/tests check                  # runs test_csfset_pair among others

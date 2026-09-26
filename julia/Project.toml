@@ -1,0 +1,13 @@
+name = "HExpr"
+uuid = "04db43be-c920-4ee0-b432-501ddf03c3be"
+version = "1.0.0"
+authors = ["H. Honda"]
+
+[compat]
+julia = "1"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]

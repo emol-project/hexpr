@@ -1,0 +1,31 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+# message (restore with preferred-citation): "If you use this software, please cite both the software and the methodology paper (see preferred-citation)."
+title: hexpr
+abstract: "C library and multi-language bindings for generating expressions of the CSF-based Hamiltonian matrix used in quantum-chemistry CI calculations."
+type: software
+version: 1.0.0
+license: MIT
+repository-code: "https://github.com/emol-project/hexpr"
+url: "https://github.com/emol-project/hexpr"
+authors:
+  - family-names: Honda
+    given-names: Hiroaki
+    orcid: "https://orcid.org/0009-0004-7674-5540"
+  - family-names: Noro
+    given-names: Takeshi
+date-released: "2026-09-26"
+# doi: "10.5281/zenodo.XXXXXXX"   # TODO: Zenodo concept DOI, backfill after release
+# identifiers:                    # TODO: add Zenodo DOI identifiers after first release
+#preferred-citation:
+#  type: article
+#  title: "hexpr: A Configuration State Function Based Hamiltonian Matrix Element Expression Library"
+#  authors:
+#    - family-names: Honda
+#      given-names: Hiroaki
+#      orcid: "https://orcid.org/0009-0004-7674-5540"
+#    - family-names: Noro
+#      given-names: Takeshi
+#  year: 2026   # TODO: confirm
+#  # doi: "10.48550/arXiv.XXXX.XXXXX"   # TODO: paper DOI (arXiv), backfill later
+#  # journal / arxiv identifier: TODO once known
