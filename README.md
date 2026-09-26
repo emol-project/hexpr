@@ -144,6 +144,19 @@ is described in its commit message.
 
 ## Citation
 
-If you use hexpr in published work, please cite:
+If you use hexpr in published work, please cite both the methodology
+paper and the software:
 
-> [Paper details TBD]
+> H. Honda and T. Noro, "hexpr: A Configuration State Function Based
+> Hamiltonian Matrix Element Expression Library", preprint (2026),
+> Zenodo. doi:[10.5281/zenodo.22977329](https://doi.org/10.5281/zenodo.22977329)
+
+> H. Honda and T. Noro, hexpr, software, Zenodo.
+> doi:[10.5281/zenodo.22974832](https://doi.org/10.5281/zenodo.22974832)
+
+The software DOI above covers all releases and resolves to the latest.
+To cite the exact release you used, take its version DOI from the
+Zenodo record; v1.0.0 is
+[10.5281/zenodo.22974833](https://doi.org/10.5281/zenodo.22974833).
+GitHub's "Cite this repository" button gives the paper reference in APA
+and BibTeX form (from `CITATION.cff`).
