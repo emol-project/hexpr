@@ -15,8 +15,14 @@ authors:
   - family-names: Noro
     given-names: Takeshi
 date-released: "2026-09-26"
-# doi: "10.5281/zenodo.XXXXXXX"   # TODO: Zenodo concept DOI, backfill after release
-# identifiers:                    # TODO: add Zenodo DOI identifiers after first release
+doi: "10.5281/zenodo.22974832"
+identifiers:
+  - type: doi
+    value: "10.5281/zenodo.22974832"
+    description: "Concept DOI (all versions)"
+  - type: doi
+    value: "10.5281/zenodo.22974833"
+    description: "Version 1.0.0"
 #preferred-citation:
 #  type: article
 #  title: "hexpr: A Configuration State Function Based Hamiltonian Matrix Element Expression Library"
