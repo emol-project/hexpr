@@ -156,7 +156,8 @@ paper and the software:
 
 The software DOI above covers all releases and resolves to the latest.
 To cite the exact release you used, take its version DOI from the
-Zenodo record; v1.0.0 is
+Zenodo record; v1.1.0 is
+[10.5281/zenodo.23308333](https://doi.org/10.5281/zenodo.23308333) and v1.0.0 is
 [10.5281/zenodo.22974833](https://doi.org/10.5281/zenodo.22974833).
 GitHub's "Cite this repository" button gives the paper reference in APA
 and BibTeX form (from `CITATION.cff`).

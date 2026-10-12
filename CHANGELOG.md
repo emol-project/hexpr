@@ -57,7 +57,7 @@ follows [Keep a Changelog](https://keepachangelog.com/); versions follow
   10 electrons in 8 internal orbitals) one complete pair decomposition
   takes 57 instead of 93 us including the sub-DRT; with many threads the
   gain is larger (less allocator and memory traffic), e.g. 36.6 -> 12.7 s
-  for a 37,162-CSF compressed build on 16 threads in libhexpr2. Every
+  for a 37,162-CSF compressed build on 16 threads in hexpr2. Every
   test, including the byte-identical frozen oracles, passes unchanged.
 
 ### Unchanged
