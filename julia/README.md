@@ -213,6 +213,8 @@ These take a `Drt` and CSF row indices (0-based). `which` is a Symbol:
 | `pair_count(d, bra, ket; which=:full)` | `Int` | Term count for one pair |
 | `pair_max_terms(d; which=:full)` | `Int` | Upper bound on terms for any single pair |
 | `pair_eval(d, bra, ket; which=:full)` | `(ij, pqrs, coef)` | Pair evaluation |
+| `pair_eval_full(d, bra, ket; which=:full)` / `pair_count_full` | `(ij, pqrs, coef)` / `Int` | Complete decomposition of the pair, either argument order (since 1.1) |
+| `block_eval_full(d, bra_indices, ket_indices; which=:full)` / `block_count_full` | as `block_eval` / `Int` | Block with the complete decomposition of every pair (since 1.1) |
 | `block_count(d, bra_idx, ket_idx; which=:full)` | `Int` | Term count for a rectangular block |
 | `block_max_terms(d, n_bra, n_ket; which=:full)` | `Int` | Upper bound on terms for a block |
 | `block_eval(d, bra_idx, ket_idx; which=:full)` | `(ij, pqrs, coef, bra_pos, ket_pos)` | Block evaluation |
@@ -228,6 +230,7 @@ internally.
 | Name | Returns | Description |
 |------|---------|-------------|
 | `csf_pair_eval(bra_steps, ket_steps; which=:full)` | `(ij, pqrs, coef)` | Pair evaluation from step-code vectors |
+| `csf_pair_eval_full(bra_steps, ket_steps; which=:full)` | `(ij, pqrs, coef)` | As `csf_pair_eval`, complete decomposition (since 1.1) |
 | `csf_block_eval(bra_csfs, ket_csfs; which=:full)` | `(ij, pqrs, coef, bra_pos, ket_pos)` | Block evaluation from step-code matrices |
 | `csf_subspace_eval(csfs; which=:full)` | `(ij, pqrs, coef, bra_pos, ket_pos)` | Subspace evaluation from a step-code matrix |
 

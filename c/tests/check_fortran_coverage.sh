@@ -219,7 +219,8 @@ fi
 # --- C. exported symbol table vs both headers -------------------------
 #
 # Expected exports: every name declared in the public header, plus every
-# hexpr_ name declared in the F77 header.  The latter is 46, not 45: the
+# hexpr_ name declared in the F77 header.  The latter is one more than the
+# number of wrappers: the
 # wrappers plus hexpr_fortran_stdout, which fortran/src/hexpr_mod.f90
 # binds to by name through the shared library and which therefore has to
 # stay visible even though it is not public C API.

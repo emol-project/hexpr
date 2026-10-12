@@ -309,6 +309,42 @@
             zeros(UInt8, 2, 4), zeros(UInt8, 2, 5))
     end
 
+    # ------------------------------------------------------------------
+    # Complete-decomposition calls (since 1.1)
+    # ------------------------------------------------------------------
+
+    @testset "pair_eval_full = union of both directions" begin
+        todict(ij, pq, co) = Dict((ij[k], pq[k]) => co[k] for k in eachindex(ij))
+        for which in (:full, :one), i in 0:nc-1, j in i:nc-1
+            a = todict(HExpr.pair_eval(drt, i, j; which=which)...)
+            b = todict(HExpr.pair_eval(drt, j, i; which=which)...)
+            u = merge(a, b)
+            r1 = HExpr.pair_eval_full(drt, i, j; which=which)
+            r2 = HExpr.pair_eval_full(drt, j, i; which=which)
+            f1, f2 = todict(r1...), todict(r2...)
+            @test length(f1) == length(r1[1])          # no repeated key
+            @test keys(f1) == keys(u) == keys(f2)
+            @test all(isapprox(f1[k], u[k]; atol=1e-12) &&
+                      isapprox(f2[k], u[k]; atol=1e-12) for k in keys(u))
+            @test HExpr.pair_count_full(drt, i, j; which=which) == length(f1)
+        end
+        # a disjoint off-diagonal block is complete pair by pair
+        bra, ket = [0, 1, 2], [17, 18, 19]
+        ij, pq, co, bp, kp = HExpr.block_eval_full(drt, bra, ket)
+        @test HExpr.block_count_full(drt, bra, ket) == length(ij)
+        for (p, i) in enumerate(bra), (q, j) in enumerate(ket)
+            sel = (bp .== p - 1) .& (kp .== q - 1)
+            @test todict(ij[sel], pq[sel], co[sel]) ==
+                  todict(HExpr.pair_eval_full(drt, i, j)...)
+        end
+        # step-based helper: compare by pqrs (ij is per-DRT)
+        _, p_hi, c_hi = HExpr.csf_pair_eval_full(csfs_mat[1, :], csfs_mat[2, :])
+        _, p_lo, c_lo = HExpr.pair_eval_full(drt, 0, 1)
+        d_hi, d_lo = Dict(zip(p_hi, c_hi)), Dict(zip(p_lo, c_lo))
+        @test keys(d_hi) == keys(d_lo)
+        @test all(isapprox(d_hi[k], d_lo[k]; atol=1e-12) for k in keys(d_lo))
+    end
+
     finalize(drt)
     HExpr.shutdown()
 end

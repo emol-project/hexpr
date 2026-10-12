@@ -4,6 +4,68 @@ All notable user-facing changes to hexpr are recorded here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 `HEXPR_VERSION_MAJOR.MINOR.PATCH` in `c/include/hexpr.h`.
 
+## [1.1.0] -- 2026-10-12
+
+### Added
+
+- Complete-decomposition calls: `hexpr_pair_count_full`,
+  `hexpr_pair_eval_full`, `hexpr_block_count_full` and
+  `hexpr_block_eval_full`, with their F77 wrappers (`hexpr_pair_count_full_`
+  and so on) and the corresponding functions in the Fortran module and the
+  Python, Julia and Ruby bindings (`pair_count_full`, `pair_eval_full`,
+  `block_count_full`, `block_eval_full`, `csf_pair_eval_full`).
+  `hexpr_pair_eval` returns one direction-selected decomposition of
+  `H[I,J]`, and the complete one is the union of both argument orders
+  (`docs/PAIR_API_SEMANTICS.md`, G4). The new calls return that union in one
+  call, the same terms with the same coefficients for either argument order,
+  and each `(ij, pqrs)` key once. `hexpr_block_eval_full` is therefore
+  complete for a block whose bra and ket sets are disjoint, which
+  `hexpr_block_eval` is not.
+- They are also faster than calling `hexpr_pair_eval` in both orders: the
+  loop search follows only the bra and ket walks. Measured per pair on
+  random pairs, against two `hexpr_pair_eval` calls: 56 vs 216 us (CAS(6,6)
+  singlet, 175 CSFs), 59 vs 207 us (FOCI, 125 CSFs), 65 vs 345 us (6
+  electrons in 8 orbitals, 1176 CSFs).
+- `c/tests/test_pair_full_union.c` checks, on every pair of SOCI, FOCI,
+  full-CAS (singlet, triplet, quintet) and CSFSET spaces, that the new calls
+  equal the union of the two directions of `hexpr_pair_eval` with agreeing
+  coefficients, independent of the argument order, for `HEXPR_EXPR_FULL` and
+  `HEXPR_EXPR_ONE`, and that the block form matches the pair form.
+
+### Fixed
+
+- Pair and block evaluations can now run concurrently in several threads,
+  on one shared DRT handle or on separate ones. In 1.0.0 they shared a
+  process-wide L(k) cache (filled on a miss), and the README's statement
+  that read-only queries on a handle are reentrant did not hold for them.
+  The cache and the walk restriction of the `*_full` calls are now
+  thread-local (C11 `_Thread_local`), and the sqrt(2), sqrt(3) table is a
+  constant. `c/tests/test_pair_threads.c` checks that 8 threads give
+  bit-identical terms to a serial run for `hexpr_pair_eval` and
+  `hexpr_pair_eval_full`, on a shared handle and on per-thread CSFSET
+  sub-DRTs. The serial speed is unchanged (the search fetches the
+  thread-local state once per call and passes it down).
+
+### Changed
+
+- Faster pair evaluation, same output. The loop-deduplication table of the
+  search was cleared (1,024 buckets) at every start node and walked in
+  full when released; it now records the buckets it used and resets only
+  those. The construction tables of a CSFSET DRT are sized to the set
+  instead of 4,096 buckets, and the search keeps its per-level arrays on
+  the stack up to 128 orbitals. On the pairs of a real MRCI build (N2,
+  10 electrons in 8 internal orbitals) one complete pair decomposition
+  takes 57 instead of 93 us including the sub-DRT; with many threads the
+  gain is larger (less allocator and memory traffic), e.g. 36.6 -> 12.7 s
+  for a 37,162-CSF compressed build on 16 threads in libhexpr2. Every
+  test, including the byte-identical frozen oracles, passes unchanged.
+
+### Unchanged
+
+- Every v1.0 call returns exactly what it returned in 1.0.0; the frozen
+  `reference_csfset/` oracle is reproduced byte-for-byte. The new calls do
+  not alter the directional contract of the existing ones.
+
 ## [1.0.0] -- 2026-09-26
 
 Initial public release.

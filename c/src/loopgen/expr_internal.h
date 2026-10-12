@@ -107,6 +107,13 @@ static inline void ct_push(ct_vec_t *v, const comp_term_t *t)
 le_vec_t calc_TensorOp_average(const hexpr_drt_t *drt,
                                 const tensor_product_t *tp, int origin);
 
+/* Restrict calc_TensorOp_average to loops whose g walk follows want_g and
+ * whose f walk follows want_f (step codes 0..3 per orbital, over drt); NULL
+ * clears the restriction. Used by the single-pair path (csf_pair.c). */
+void hexpr_loopgen_set_walks(const hexpr_drt_t *drt,
+                             const unsigned char *want_g,
+                             const unsigned char *want_f);
+
 /* ---- Final expanded term (for output) ---- */
 typedef struct {
     /* 0-based packed triangle index of the (bra,ket) pair. The binary APIs emit

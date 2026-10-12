@@ -48,14 +48,14 @@ int main(void)
 
     /* --- version --- */
     check_int("hexpr_version_major() == 1", hexpr_version_major(), 1);
-    check_int("hexpr_version_minor() == 0", hexpr_version_minor(), 0);
+    check_int("hexpr_version_minor() == 1", hexpr_version_minor(), 1);
     check_int("hexpr_version_patch() == 0", hexpr_version_patch(), 0);
     {
         const char *vs = hexpr_version_string();
-        int ok = vs && strcmp(vs, "1.0.0") == 0;
+        int ok = vs && strcmp(vs, "1.1.0") == 0;
         checks++;
         printf("  %-55s %s  (got '%s')\n",
-               "hexpr_version_string() == '1.0.0'", ok ? "PASS" : "FAIL", vs ? vs : "(null)");
+               "hexpr_version_string() == '1.1.0'", ok ? "PASS" : "FAIL", vs ? vs : "(null)");
         if (!ok) failures++;
     }
 

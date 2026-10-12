@@ -460,7 +460,7 @@ static void warm_lk_table(const hexpr_drt_t *drt)
  */
 static ot_vec_t brooks_all(const hexpr_drt_t *drt)
 {
-    bc_init_constants();   /* seeds hexpr_root_val (shared roots) before any walk */
+    bc_init_constants();   /* no-op since 1.1 (the roots are constants) */
 
     /* Two-phase L(k) (Kamuy): pass 1 fills the table, pass 2 reads it.
      *   generate + warm : walk the enable_whole ops, filling LK via hmlkva.

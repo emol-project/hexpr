@@ -54,6 +54,18 @@ section is description, not guarantee.
   would return, tagged with `bra_pos = i` and `ket_pos = j`.
   `hexpr_subspace_eval(drt, S, w)` is `hexpr_block_eval(drt, S, S, w)`.
   See "What block and subspace do, exactly" below for what this implies.
+- **G7. Complete-decomposition calls (since v1.1).**
+  `hexpr_pair_eval_full(drt, I, J, w)` returns exactly the union of G4: the
+  terms of `hexpr_pair_eval(drt, I, J, w)` and `hexpr_pair_eval(drt, J, I, w)`,
+  each `(ij, pqrs)` key once, with the coefficient of G5.
+  `hexpr_pair_eval_full(drt, I, J, w)` and `hexpr_pair_eval_full(drt, J, I, w)`
+  return the same set. `hexpr_pair_count_full` is its term count.
+  `hexpr_block_eval_full(drt, B, K, w)` returns, for every ordered pair
+  `(B[i], K[j])`, exactly the terms of `hexpr_pair_eval_full(drt, B[i], K[j], w)`,
+  tagged with `bra_pos = i` and `ket_pos = j`, so it is complete for every
+  pair, including when `B` and `K` are disjoint. G1, G2 and G3 hold for these
+  calls as for the v1.0 ones. N3 applies to them too: the order of terms is
+  not specified.
 
 ### Not guaranteed
 
@@ -220,9 +232,10 @@ to assume the opposite:
   **every pair is evaluated in one direction only**, and the result is a
   partial decomposition of each element.
 
-For a disjoint off-diagonal block, either call
-`hexpr_block_eval(drt, B, K, w)` and `hexpr_block_eval(drt, K, B, w)` and
-merge by G5, or evaluate the pairs individually with the helper below.
+For a disjoint off-diagonal block, call `hexpr_block_eval_full` (since
+v1.1), or call `hexpr_block_eval(drt, B, K, w)` and
+`hexpr_block_eval(drt, K, B, w)` and merge by G5, or evaluate the pairs
+individually with the helper below.
 
 This distinction does not affect the summed matrix element when the
 caller symmetrizes correctly over a full space, which is why it went
@@ -248,6 +261,10 @@ Two things about it are worth knowing:
   regardless of where the canonical walk places them. That is exactly
   the input-order guarantee, and it is why the helper is correct.
 
+Since v1.1 each binding also has `csf_pair_eval_full(bra_steps,
+ket_steps, which)`, which does the same with `pair_eval_full` and so
+returns the complete decomposition (G7).
+
 Per N4, the single-direction behavior of these helpers is current
 behavior rather than contract. A future version may return the merged
 decomposition, or add a separate entry point that does; code that wants
@@ -256,8 +273,15 @@ indices.
 
 ## Reconstructing the complete decomposition
 
+Since v1.1 the library does this itself: call `hexpr_pair_eval_full`
+(`pair_eval_full` in the bindings), or `hexpr_block_eval_full` for a block
+(G7). It is also faster than the two calls below, because each direction's
+loop search follows only the bra and ket walks (about 4x on the cases in
+`CHANGELOG.md`). The recipes below remain correct and are what code that
+must also run against 1.0.0 should use.
+
 To obtain the complete `(coef, pqrs)` decomposition of `H[I, J]`
-from hexpr, call both directions and keep the larger of the two:
+from hexpr 1.0, call both directions and keep the larger of the two:
 
 ```python
 def complete_pair_decomposition(drt, I, J, which="full"):
@@ -313,11 +337,19 @@ until needed. The hexpr core stays a faithful realization of the
 loop algebra; the user composes whatever view of the result they
 need.
 
+v1.1 keeps this: the v1.0 calls still return the direction-selected
+decompositions, unchanged. The `*_full` calls (G7) were added beside them
+for the common case of building a CI Hamiltonian, where the split is a
+trap -- a disjoint `hexpr_block_eval` is silently partial -- and where
+evaluating both orders separately costs about four times what the merged
+call does.
+
 ## API consequences for users
 
 For CI Hamiltonian construction (the most common use case), users
 who only need `H[I, J]` as a sum should either:
 
+0. Since v1.1, call `pair_eval_full` / `block_eval_full`, or
 1. Wrap `pair_eval` as shown above and use the wrapper, or
 2. Call `hexpr_subspace_eval` over the CSF set, which evaluates both
    orderings of every pair inside the set and is therefore complete.

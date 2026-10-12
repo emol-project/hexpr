@@ -47,6 +47,11 @@ program test_pair
   real(c_double),     allocatable, target :: b2_co(:)
   integer(c_int) :: ns, nb
 
+  ! Complete decomposition (T8, since 1.1)
+  integer(c_int32_t), allocatable, target :: u_ij(:), u_pq(:), f_ij(:), f_pq(:)
+  real(c_double),     allocatable, target :: u_co(:), f_co(:)
+  integer(c_int) :: na, nf, nfc, n_u, nbad
+
   nfail = 0
 
   st = hexpr_init()
@@ -295,6 +300,50 @@ program test_pair
     deallocate(b2_bp, b2_kp, b2_ij, b2_pq, b2_co)
   end if
   deallocate(s_bp, s_kp, s_ij, s_pq, s_co)
+
+  ! ---- T8: pair_eval_full == union of both directions (v1.1) -----
+  ! For every pair i <= j, sort+dedup the terms of pair_eval(i,j) and
+  ! pair_eval(j,i) and compare with the sorted pair_eval_full(j,i).
+  allocate(u_ij(2*max_terms), u_pq(2*max_terms), u_co(2*max_terms))
+  allocate(f_ij(max_terms), f_pq(max_terms), f_co(max_terms))
+  nbad = 0
+  do i = 0, nc-1
+    do j = i, nc-1
+      st = hexpr_pair_eval(drt, int(i, c_int), int(j, c_int), HEXPR_EXPR_FULL, &
+                           na, u_ij, u_pq, u_co)
+      st = hexpr_pair_eval(drt, int(j, c_int), int(i, c_int), HEXPR_EXPR_FULL, &
+                           nb, u_ij(na+1:), u_pq(na+1:), u_co(na+1:))
+      call sort_terms(na + nb, u_ij, u_pq, u_co)
+      n_u = 0
+      do k = 1, na + nb
+        if (n_u > 0) then
+          if (u_ij(k) == u_ij(n_u) .and. u_pq(k) == u_pq(n_u)) cycle
+        end if
+        n_u = n_u + 1
+        u_ij(n_u) = u_ij(k);  u_pq(n_u) = u_pq(k);  u_co(n_u) = u_co(k)
+      end do
+      st = hexpr_pair_eval_full(drt, int(j, c_int), int(i, c_int), HEXPR_EXPR_FULL, &
+                                nf, f_ij, f_pq, f_co)
+      if (st /= HEXPR_OK) nbad = nbad + 1
+      st = hexpr_pair_count_full(drt, int(i, c_int), int(j, c_int), HEXPR_EXPR_FULL, nfc)
+      if (nfc /= nf .or. nf /= n_u) then
+        nbad = nbad + 1
+        cycle
+      end if
+      call sort_terms(nf, f_ij, f_pq, f_co)
+      do k = 1, nf
+        if (f_ij(k) /= u_ij(k) .or. f_pq(k) /= u_pq(k) .or. &
+            abs(f_co(k) - u_co(k)) > 1.0e-12_c_double) nbad = nbad + 1
+      end do
+    end do
+  end do
+  deallocate(u_ij, u_pq, u_co, f_ij, f_pq, f_co)
+  if (nbad > 0) then
+    write(*,'(a,i0,a)') '  T8 FAIL: ', nbad, ' mismatch(es) vs union of directions'
+    nfail = nfail + 1
+  else
+    write(*,'(a)') '  T8 pair_eval_full == union of both directions: PASS'
+  end if
 
   call hexpr_drt_destroy(drt)
   call hexpr_shutdown()

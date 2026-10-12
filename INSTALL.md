@@ -174,7 +174,7 @@ not bundled with the repository. The test suite still reports
 `ALL TESTS PASSED` without them; the affected comparisons print
 `SKIP`. To restore full regression coverage, download
 [reference.tar.gz](https://github.com/emol-project/hexpr/releases/download/v1.0.0/reference.tar.gz)
-and extract it on top of the repository. See [c/README.md](c/README.md)
+(attached to v1.0.0; the reference outputs are unchanged since) and extract it on top of the repository. See [c/README.md](c/README.md)
 for details.
 
 ## 6. Optional components

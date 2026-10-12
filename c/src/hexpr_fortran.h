@@ -109,6 +109,26 @@ void hexpr_block_eval_(const hexpr_drt_t **drt,
                        int32_t *out_bra_pos, int32_t *out_ket_pos,
                        int32_t *out_ij, int32_t *out_pqrs, double *out_coef,
                        int *out_status);
+/* complete decomposition (since v1.1) */
+void hexpr_pair_count_full_(const hexpr_drt_t **drt,
+                            const int *bra, const int *ket,
+                            const int *which, int *out_count, int *out_status);
+void hexpr_pair_eval_full_(const hexpr_drt_t **drt,
+                           const int *bra, const int *ket, const int *which,
+                           int *out_count,
+                           int32_t *out_ij, int32_t *out_pqrs, double *out_coef,
+                           int *out_status);
+void hexpr_block_count_full_(const hexpr_drt_t **drt,
+                             const int *bra_indices, const int *n_bra,
+                             const int *ket_indices, const int *n_ket,
+                             const int *which, int *out_count, int *out_status);
+void hexpr_block_eval_full_(const hexpr_drt_t **drt,
+                            const int *bra_indices, const int *n_bra,
+                            const int *ket_indices, const int *n_ket,
+                            const int *which, int *out_count,
+                            int32_t *out_bra_pos, int32_t *out_ket_pos,
+                            int32_t *out_ij, int32_t *out_pqrs, double *out_coef,
+                            int *out_status);
 void hexpr_subspace_count_(const hexpr_drt_t **drt,
                            const int *indices, const int *n,
                            const int *which, int *out_count, int *out_status);

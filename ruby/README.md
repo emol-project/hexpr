@@ -157,6 +157,7 @@ Source: [`ruby/lib/hexpr.rb`](lib/hexpr.rb).
 | `HExpr.version_major/minor/patch` | Version integers |
 | `HExpr.last_error` | Last error message as `String` |
 | `HExpr.csf_pair_eval(bra_steps, ket_steps, which: :full)` | High-level pair evaluation from step-code arrays |
+| `HExpr.csf_pair_eval_full(bra_steps, ket_steps, which: :full)` | As `csf_pair_eval`, complete decomposition (since 1.1) |
 | `HExpr.csf_block_eval(bra_csfs, ket_csfs, which: :full)` | High-level rectangular block evaluation |
 | `HExpr.csf_subspace_eval(csfs, which: :full)` | High-level square subspace evaluation |
 | `HExpr.step_parse(str, norb)` | Parse `"eudf..."` string to an `Array<Integer>` of step codes, length `norb` |
@@ -208,6 +209,8 @@ These take CSF row indices (0-based). `which:` is a Symbol: `:full` or
 | `pair_count(bra, ket, which: :full)` | `Integer` | Term count for one pair |
 | `pair_max_terms(which: :full)` | `Integer` | Upper bound on terms for any single pair |
 | `pair_eval(bra, ket, which: :full)` | `[ij, pqrs, coef]` | Pair evaluation |
+| `pair_eval_full(bra, ket, which: :full)` / `pair_count_full` | `[ij, pqrs, coef]` / Integer | Complete decomposition of the pair, either argument order (since 1.1) |
+| `block_eval_full(bra_indices, ket_indices, which: :full)` / `block_count_full` | as `block_eval` / Integer | Block with the complete decomposition of every pair (since 1.1) |
 | `block_count(bra_indices, ket_indices, which: :full)` | `Integer` | Term count for a rectangular block |
 | `block_max_terms(n_bra, n_ket, which: :full)` | `Integer` | Upper bound on terms for a block |
 | `block_eval(bra_indices, ket_indices, which: :full)` | `[ij, pqrs, coef, bra_pos, ket_pos]` | Block evaluation |

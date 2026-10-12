@@ -412,4 +412,57 @@ class TestPair < Minitest::Test
     ket_csfs = [[0, 1, 2], [1, 0, 2]]
     assert_raises(ArgumentError) { HExpr.csf_block_eval(bra_csfs, ket_csfs) }
   end
+
+  # --- Complete-decomposition calls (since 1.1) ---
+
+  def to_h_terms(ij, pqrs, coef)
+    h = {}
+    ij.each_index { |k| h[[ij[k], pqrs[k]]] = coef[k] }
+    assert_equal ij.size, h.size, "repeated (ij, pqrs) key"
+    h
+  end
+
+  def test_pair_eval_full_is_union_of_directions
+    %i[full one].each do |w|
+      (0...@nc).each do |i|
+        (i...@nc).each do |j|
+          a = to_h_terms(*@drt.pair_eval(i, j, which: w))
+          b = to_h_terms(*@drt.pair_eval(j, i, which: w))
+          u = a.merge(b)
+          f1 = to_h_terms(*@drt.pair_eval_full(i, j, which: w))
+          f2 = to_h_terms(*@drt.pair_eval_full(j, i, which: w))
+          assert_equal u.keys.sort, f1.keys.sort
+          assert_equal u.keys.sort, f2.keys.sort
+          u.each do |k, c|
+            assert_in_delta c, f1[k], 1e-12
+            assert_in_delta c, f2[k], 1e-12
+          end
+          assert_equal f1.size, @drt.pair_count_full(i, j, which: w)
+        end
+      end
+    end
+  end
+
+  def test_block_eval_full_disjoint_block
+    bra = [0, 1, 2]
+    ket = [17, 18, 19]
+    ij, pq, co, bp, kp = @drt.block_eval_full(bra, ket)
+    assert_equal ij.size, @drt.block_count_full(bra, ket)
+    bra.each_with_index do |i, p|
+      ket.each_with_index do |j, q|
+        sel = (0...ij.size).select { |k| bp[k] == p && kp[k] == q }
+        got = to_h_terms(sel.map { |k| ij[k] }, sel.map { |k| pq[k] }, sel.map { |k| co[k] })
+        assert_equal to_h_terms(*@drt.pair_eval_full(i, j)), got
+      end
+    end
+  end
+
+  def test_csf_pair_eval_full
+    _, p_hi, c_hi = HExpr.csf_pair_eval_full(@csfs[0], @csfs[1])
+    _, p_lo, c_lo = @drt.pair_eval_full(0, 1)
+    hi = p_hi.zip(c_hi).to_h
+    lo = p_lo.zip(c_lo).to_h
+    assert_equal lo.keys.sort, hi.keys.sort
+    lo.each { |k, c| assert_in_delta c, hi[k], 1e-12 }
+  end
 end

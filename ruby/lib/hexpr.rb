@@ -105,12 +105,25 @@ module HExpr
   attach_function :hexpr_pair_eval,
                   [:pointer, :int, :int, :int, :pointer,
                    :pointer, :pointer, :pointer], :int
+  # complete decomposition (since 1.1); same signatures as the v1.0 calls
+  attach_function :hexpr_pair_count_full,
+                  [:pointer, :int, :int, :int, :pointer], :int
+  attach_function :hexpr_pair_eval_full,
+                  [:pointer, :int, :int, :int, :pointer,
+                   :pointer, :pointer, :pointer], :int
   attach_function :hexpr_pair_max_terms,
                   [:pointer, :int, :pointer], :int
 
   attach_function :hexpr_block_count,
                   [:pointer, :pointer, :int, :pointer, :int, :int, :pointer], :int
   attach_function :hexpr_block_eval,
+                  [:pointer,
+                   :pointer, :int, :pointer, :int,
+                   :int, :pointer,
+                   :pointer, :pointer, :pointer, :pointer, :pointer], :int
+  attach_function :hexpr_block_count_full,
+                  [:pointer, :pointer, :int, :pointer, :int, :int, :pointer], :int
+  attach_function :hexpr_block_eval_full,
                   [:pointer,
                    :pointer, :int, :pointer, :int,
                    :int, :pointer,
@@ -170,6 +183,16 @@ module HExpr
     sub = Drt.from_csfset([bra_steps.to_a, ket_steps.to_a], norb)
     # Row 0 is the bra, row 1 is the ket, whatever the canonical order is.
     sub.pair_eval(0, 1, which: which)
+  end
+
+  # As csf_pair_eval, but the complete decomposition of the pair (since 1.1).
+  def csf_pair_eval_full(bra_steps, ket_steps, which: :full)
+    norb = bra_steps.size
+    unless ket_steps.size == norb
+      raise ArgumentError, "ket_steps length #{ket_steps.size} != norb #{norb}"
+    end
+    sub = Drt.from_csfset([bra_steps.to_a, ket_steps.to_a], norb)
+    sub.pair_eval_full(0, 1, which: which)
   end
 
   def csf_block_eval(bra_csfs, ket_csfs, which: :full)
@@ -424,10 +447,12 @@ module HExpr
     # --- Per-pair evaluation ---
 
     def pair_count(bra, ket, which: :full)
-      out = FFI::MemoryPointer.new(:int32, 1)
-      status = HExpr.hexpr_pair_count(@ptr, bra, ket, which_int(which), out)
-      raise "hexpr_pair_count failed: #{HExpr.last_error}" unless status == HExpr::HEXPR_OK
-      out.read_int32
+      pair_count_with(:hexpr_pair_count, bra, ket, which)
+    end
+
+    # Number of terms #pair_eval_full returns (since 1.1).
+    def pair_count_full(bra, ket, which: :full)
+      pair_count_with(:hexpr_pair_count_full, bra, ket, which)
     end
 
     def pair_max_terms(which: :full)
@@ -441,16 +466,31 @@ module HExpr
     # as #csf_steps and #csf_index. The returned ij is a packed CANONICAL
     # pair address, not a pair of indices into this DRT
     # (docs/PQRS_INDEX_SPEC.md); do not decode it and feed the result back.
+    #
+    # This is one direction-selected decomposition of H[bra, ket]
+    # (docs/PAIR_API_SEMANTICS.md); #pair_eval_full returns the complete one.
     def pair_eval(bra, ket, which: :full)
+      pair_eval_with(:hexpr_pair_eval, bra, ket, which)
+    end
+
+    # Complete decomposition of H[bra, ket] in one call (since 1.1). Same
+    # arguments and result as #pair_eval; the terms are the union of
+    # pair_eval(bra, ket) and pair_eval(ket, bra), with the same
+    # coefficients, and do not depend on the argument order.
+    def pair_eval_full(bra, ket, which: :full)
+      pair_eval_with(:hexpr_pair_eval_full, bra, ket, which)
+    end
+
+    def pair_eval_with(fn, bra, ket, which)
       wi    = which_int(which)
       max_t = pair_max_terms(which: which)
       ij_buf    = FFI::MemoryPointer.new(:int32,  max_t)
       pqrs_buf  = FFI::MemoryPointer.new(:int32,  max_t)
       coef_buf  = FFI::MemoryPointer.new(:double, max_t)
       out_count = FFI::MemoryPointer.new(:int32,  1)
-      status = HExpr.hexpr_pair_eval(@ptr, bra, ket, wi, out_count,
-                                      ij_buf, pqrs_buf, coef_buf)
-      raise "hexpr_pair_eval failed: #{HExpr.last_error}" unless status == HExpr::HEXPR_OK
+      status = HExpr.send(fn, @ptr, bra, ket, wi, out_count,
+                          ij_buf, pqrs_buf, coef_buf)
+      raise "#{fn} failed: #{HExpr.last_error}" unless status == HExpr::HEXPR_OK
       n = out_count.read_int32
       [ij_buf.read_array_of_int32(n),
        pqrs_buf.read_array_of_int32(n),
@@ -460,15 +500,12 @@ module HExpr
     # --- Block evaluation ---
 
     def block_count(bra_indices, ket_indices, which: :full)
-      n_bra = bra_indices.size
-      n_ket = ket_indices.size
-      out   = FFI::MemoryPointer.new(:int32, 1)
-      status = HExpr.hexpr_block_count(@ptr,
-                                        int32_buf(bra_indices), n_bra,
-                                        int32_buf(ket_indices), n_ket,
-                                        which_int(which), out)
-      raise "hexpr_block_count failed: #{HExpr.last_error}" unless status == HExpr::HEXPR_OK
-      out.read_int32
+      block_count_with(:hexpr_block_count, bra_indices, ket_indices, which)
+    end
+
+    # Number of terms #block_eval_full returns (since 1.1).
+    def block_count_full(bra_indices, ket_indices, which: :full)
+      block_count_with(:hexpr_block_count_full, bra_indices, ket_indices, which)
     end
 
     def block_max_terms(n_bra, n_ket, which: :full)
@@ -482,6 +519,17 @@ module HExpr
     # The returned bra_pos/ket_pos are positions within those arrays, and
     # they, not ij, are how a term is attributed to a pair.
     def block_eval(bra_indices, ket_indices, which: :full)
+      block_eval_with(:hexpr_block_eval, bra_indices, ket_indices, which)
+    end
+
+    # As #block_eval, but every ordered pair contributes the complete
+    # decomposition (#pair_eval_full), so a block whose bra and ket sets are
+    # disjoint is complete (since 1.1).
+    def block_eval_full(bra_indices, ket_indices, which: :full)
+      block_eval_with(:hexpr_block_eval_full, bra_indices, ket_indices, which)
+    end
+
+    def block_eval_with(fn, bra_indices, ket_indices, which)
       wi    = which_int(which)
       n_bra = bra_indices.size
       n_ket = ket_indices.size
@@ -492,13 +540,13 @@ module HExpr
       pqrs_buf    = FFI::MemoryPointer.new(:int32,  alloc)
       coef_buf    = FFI::MemoryPointer.new(:double, alloc)
       out_count   = FFI::MemoryPointer.new(:int32,  1)
-      status = HExpr.hexpr_block_eval(@ptr,
-                                       int32_buf(bra_indices), n_bra,
-                                       int32_buf(ket_indices), n_ket,
-                                       wi, out_count,
-                                       bra_pos_buf, ket_pos_buf,
-                                       ij_buf, pqrs_buf, coef_buf)
-      raise "hexpr_block_eval failed: #{HExpr.last_error}" unless status == HExpr::HEXPR_OK
+      status = HExpr.send(fn, @ptr,
+                          int32_buf(bra_indices), n_bra,
+                          int32_buf(ket_indices), n_ket,
+                          wi, out_count,
+                          bra_pos_buf, ket_pos_buf,
+                          ij_buf, pqrs_buf, coef_buf)
+      raise "#{fn} failed: #{HExpr.last_error}" unless status == HExpr::HEXPR_OK
       n = out_count.read_int32
       [ij_buf.read_array_of_int32(n),
        pqrs_buf.read_array_of_int32(n),
@@ -506,6 +554,24 @@ module HExpr
        bra_pos_buf.read_array_of_int32(n),
        ket_pos_buf.read_array_of_int32(n)]
     end
+
+    def pair_count_with(fn, bra, ket, which)
+      out = FFI::MemoryPointer.new(:int32, 1)
+      status = HExpr.send(fn, @ptr, bra, ket, which_int(which), out)
+      raise "#{fn} failed: #{HExpr.last_error}" unless status == HExpr::HEXPR_OK
+      out.read_int32
+    end
+
+    def block_count_with(fn, bra_indices, ket_indices, which)
+      out = FFI::MemoryPointer.new(:int32, 1)
+      status = HExpr.send(fn, @ptr,
+                          int32_buf(bra_indices), bra_indices.size,
+                          int32_buf(ket_indices), ket_indices.size,
+                          which_int(which), out)
+      raise "#{fn} failed: #{HExpr.last_error}" unless status == HExpr::HEXPR_OK
+      out.read_int32
+    end
+    private :pair_count_with, :pair_eval_with, :block_count_with, :block_eval_with
 
     # --- Subspace evaluation ---
 

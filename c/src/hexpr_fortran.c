@@ -452,6 +452,58 @@ void hexpr_block_eval_(const hexpr_drt_t **drt,
                                          out_ij, out_pqrs, out_coef);
 }
 
+/** @brief Fortran binding for @ref hexpr_pair_count_full (since v1.1).
+ *  @note Arguments as @ref hexpr_pair_count_. */
+void hexpr_pair_count_full_(const hexpr_drt_t **drt,
+                             const int *bra, const int *ket,
+                             const int *which, int *out_count, int *out_status)
+{
+    *out_status = (int)hexpr_pair_count_full(*drt, *bra, *ket,
+                                              (hexpr_expr_which_t)*which, out_count);
+}
+
+/** @brief Fortran binding for @ref hexpr_pair_eval_full (since v1.1).
+ *  @note Arguments as @ref hexpr_pair_eval_. */
+void hexpr_pair_eval_full_(const hexpr_drt_t **drt,
+                            const int *bra, const int *ket, const int *which,
+                            int *out_count,
+                            int32_t *out_ij, int32_t *out_pqrs, double *out_coef,
+                            int *out_status)
+{
+    *out_status = (int)hexpr_pair_eval_full(*drt, *bra, *ket,
+                                             (hexpr_expr_which_t)*which,
+                                             out_count, out_ij, out_pqrs, out_coef);
+}
+
+/** @brief Fortran binding for @ref hexpr_block_count_full (since v1.1).
+ *  @note Arguments as @ref hexpr_block_count_. */
+void hexpr_block_count_full_(const hexpr_drt_t **drt,
+                              const int *bra_indices, const int *n_bra,
+                              const int *ket_indices, const int *n_ket,
+                              const int *which, int *out_count, int *out_status)
+{
+    *out_status = (int)hexpr_block_count_full(*drt, bra_indices, *n_bra,
+                                               ket_indices, *n_ket,
+                                               (hexpr_expr_which_t)*which, out_count);
+}
+
+/** @brief Fortran binding for @ref hexpr_block_eval_full (since v1.1).
+ *  @note Arguments as @ref hexpr_block_eval_. */
+void hexpr_block_eval_full_(const hexpr_drt_t **drt,
+                             const int *bra_indices, const int *n_bra,
+                             const int *ket_indices, const int *n_ket,
+                             const int *which, int *out_count,
+                             int32_t *out_bra_pos, int32_t *out_ket_pos,
+                             int32_t *out_ij, int32_t *out_pqrs, double *out_coef,
+                             int *out_status)
+{
+    *out_status = (int)hexpr_block_eval_full(*drt, bra_indices, *n_bra,
+                                              ket_indices, *n_ket,
+                                              (hexpr_expr_which_t)*which, out_count,
+                                              out_bra_pos, out_ket_pos,
+                                              out_ij, out_pqrs, out_coef);
+}
+
 /** @brief Fortran binding for @ref hexpr_subspace_count.
  *  @param drt DRT-by-reference. @param indices,n,which by-reference inputs.
  *  @param[out] out_count term count. @param[out] out_status status as @c int.

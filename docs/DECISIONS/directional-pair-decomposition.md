@@ -119,3 +119,43 @@ Ordering is `cb8a3f3 → bc2c6fd → b492548`, with no change to the directional
 (`from_csfset`/arc-weights, the loop walk and `rhash`, the direction filter, the 16 operator cases,
 `add_expr_pair`) at any point — verified byte-identical across these commits (Topic-3 integrity recon
 + the directional-cause probe).
+
+## Addendum (v1.1): complete-decomposition calls added beside the v1.0 ones
+
+Status: **Accepted.** The decision above stands: the v1.0 per-pair, block and subspace calls
+return exactly what they returned in 1.0.0, and the frozen `reference_csfset/` oracle passes
+unchanged.
+
+What was added is a separate entry point, as `docs/PAIR_API_SEMANTICS.md` N4 anticipated:
+`hexpr_pair_count_full` / `hexpr_pair_eval_full` and `hexpr_block_count_full` /
+`hexpr_block_eval_full` (contract G7), with F77 wrappers and binding functions. They return the
+union of the two directions -- the complete decomposition -- in one call.
+
+**How.** For each direction the loop-element search in `calc_TensorOp_average` is restricted to
+loops whose g walk follows the bra and whose f walk follows the ket
+(`hexpr_loopgen_set_walks`, `c/src/loopgen/expr_tree.c`): the direction filter in
+`add_expr_pair` would discard the others anyway. The two restricted directions are evaluated and
+merged on `(ij, pqrs)`. Only the `*_full` calls set the restriction.
+
+**What was measured, including a wrong first guess.** The first hypothesis was that the
+restriction alone would make a single direction complete. It does not. On CAS(4,4) and CAS(6,6)
+singlets a restricted direction equals the unrestricted one on 189/190 and 15185/15225 pairs; on
+the rest the two differ because `rhash` folds a loop orientation differently -- consistent with
+measurement (b) above, which found `rhash` touching a single pair of s_full_4o4e. In every case
+the union of the two restricted directions equals the union of the two unrestricted ones. So the
+strict-subset split is still produced by the direction filter, as (b) says; the restriction only
+avoids generating elements that filter would reject.
+
+**Verification.** `c/tests/test_pair_full_union.c` checks, on every pair of SOCI, FOCI, full-CAS
+(singlet, triplet, quintet) and CSFSET spaces (about 95,000 pairs), for `HEXPR_EXPR_FULL` and
+`HEXPR_EXPR_ONE`: `*_full` equals the union of the two v1.0 directions with agreeing coefficients
+(tolerance 1e-12); it is the same for either argument order; no key repeats; the diagonal equals
+`hexpr_pair_eval(I, I)`; the count calls agree; and the block form equals the pair form pair by
+pair. The Python, Julia, Ruby and Fortran test suites check the same on CAS(4,4).
+
+**Cost.** Per pair, against two `hexpr_pair_eval` calls: 56 vs 216 us (CAS(6,6) singlet), 59 vs
+207 us (FOCI, 125 CSFs), 65 vs 345 us (6 electrons in 8 orbitals, 1176 CSFs).
+
+**Not done.** Making the v1.0 calls use the restriction would make them faster too, but changes
+their output on the `rhash`-folded pairs and would need the oracle re-frozen -- the contract
+change this record declined. It remains declined.

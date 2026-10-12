@@ -106,6 +106,11 @@ int main(void)
     check_sym(h, "hexpr_subspace_count_");
     check_sym(h, "hexpr_subspace_max_terms_");
     check_sym(h, "hexpr_subspace_eval_");
+    /* complete-decomposition variants (v1.1) */
+    check_sym(h, "hexpr_pair_count_full_");
+    check_sym(h, "hexpr_pair_eval_full_");
+    check_sym(h, "hexpr_block_count_full_");
+    check_sym(h, "hexpr_block_eval_full_");
 
     /* CSF -> determinant expansion */
     check_sym(h, "hexpr_csf_ndets_");

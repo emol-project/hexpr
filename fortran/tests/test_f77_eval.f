@@ -40,6 +40,7 @@ C     indices are 0-based.
       external hexpr_drt_ncsfs, hexpr_drt_walk_ncsfs
       external hexpr_drt_walk_csfs
       external hexpr_pair_count, hexpr_pair_max_terms, hexpr_pair_eval
+      external hexpr_pair_count_full, hexpr_pair_eval_full
 
 C     Input CSF set (case O2): row0 in csfs(1:4), row1 in csfs(5:8).
       integer*1 csfs(8), wbuf(64)
@@ -174,6 +175,30 @@ C       ---- Pair (input 1, input 1): 10 terms, canonical ij=0 -------
           nfail = nfail + 1
         end if
         call chkpr(3, nt, ij, pq, co, 10, e11ij, e11pq, e11co, nfail)
+
+C       ---- Complete decomposition (since 1.1) ----------------------
+C       pair_eval_full(1,0) must hold the two (0,1) terms above, and
+C       its count must equal pair_count_full in either argument order.
+        call hexpr_pair_count_full(drt, c0, c1, which, mt, status)
+        call hexpr_pair_eval_full(drt, c1, c0, which, nt,
+     &                            ij, pq, co, status)
+        if (status .ne. 0 .or. nt .ne. mt .or. nt .lt. 2) then
+          write(*,*) 'FAIL: pair_eval_full(1,0)=', nt,
+     &               ' pair_count_full(0,1)=', mt, ' status=', status
+          nfail = nfail + 1
+        end if
+        do 80 w0 = 1, 2
+          w1 = 0
+          do 70 m = 1, nt
+            if (ij(m) .eq. e01ij .and. pq(m) .eq. e01pq(w0) .and.
+     &          abs(co(m) - e01co(w0)) .lt. 1.0d-9) w1 = 1
+   70     continue
+          if (w1 .eq. 0) then
+            write(*,*) 'FAIL: pair_eval_full(1,0) lacks pqrs=',
+     &                 e01pq(w0)
+            nfail = nfail + 1
+          end if
+   80   continue
       end if
 
       call hexpr_drt_destroy(drt)

@@ -39,7 +39,7 @@ __all__ = [
     "NotBuilt", "InternalError",
     "Drt", "Expression",
     "step_parse",
-    "csf_pair_eval", "csf_block_eval", "csf_subspace_eval",
+    "csf_pair_eval", "csf_pair_eval_full", "csf_block_eval", "csf_subspace_eval",
 ]
 
 # Re-export IOError under the spec-required name in this module's namespace.
@@ -83,7 +83,7 @@ def shutdown() -> None:
 
 
 def version() -> str:
-    """Return the library version string, e.g. '1.0.0'."""
+    """Return the library version string, e.g. '1.1.0'."""
     raw = lib.hexpr_version_string()
     return raw.decode("utf-8") if raw else ""
 
@@ -467,8 +467,15 @@ class Drt:
 
     def pair_count(self, bra: int, ket: int, which: str = "full") -> int:
         """Number of expression terms for the (bra, ket) CSF pair."""
+        return self._pair_count(lib.hexpr_pair_count, bra, ket, which)
+
+    def pair_count_full(self, bra: int, ket: int, which: str = "full") -> int:
+        """Number of terms :meth:`pair_eval_full` returns (since 1.1)."""
+        return self._pair_count(lib.hexpr_pair_count_full, bra, ket, which)
+
+    def _pair_count(self, fn, bra, ket, which):
         out = ctypes.c_int()
-        check_status(lib.hexpr_pair_count(
+        check_status(fn(
             self._handle, int(bra), int(ket), _which_to_int(which),
             ctypes.byref(out),
         ), lib)
@@ -493,14 +500,31 @@ class Drt:
         trimmed to the actual term count. ``ij`` is a packed canonical pair
         address, not a pair of indices into this DRT -- see
         docs/PQRS_INDEX_SPEC.md. Do not decode it and feed the result back.
+
+        This is one direction-selected decomposition of H[bra, ket]; see
+        docs/PAIR_API_SEMANTICS.md. :meth:`pair_eval_full` returns the
+        complete one.
         """
+        return self._pair_eval(lib.hexpr_pair_eval, bra, ket, which)
+
+    def pair_eval_full(self, bra: int, ket: int,
+                       which: str = "full") -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Complete decomposition of H[bra, ket] in one call (since 1.1).
+
+        Same arguments and return value as :meth:`pair_eval`. The terms are
+        the union of ``pair_eval(bra, ket)`` and ``pair_eval(ket, bra)``, with
+        the same coefficients, and do not depend on the argument order.
+        """
+        return self._pair_eval(lib.hexpr_pair_eval_full, bra, ket, which)
+
+    def _pair_eval(self, fn, bra, ket, which):
         which_int = _which_to_int(which)
         max_t = self.pair_max_terms(which)
         ij   = np.empty(max_t, dtype=np.int32)
         pqrs = np.empty(max_t, dtype=np.int32)
         coef = np.empty(max_t, dtype=np.float64)
         out_count = ctypes.c_int()
-        check_status(lib.hexpr_pair_eval(
+        check_status(fn(
             self._handle, int(bra), int(ket), which_int,
             ctypes.byref(out_count),
             _ptr32(ij), _ptr32(pqrs),
@@ -513,10 +537,17 @@ class Drt:
 
     def block_count(self, bra_indices, ket_indices, which: str = "full") -> int:
         """Number of expression terms across the rectangular block."""
+        return self._block_count(lib.hexpr_block_count, bra_indices, ket_indices, which)
+
+    def block_count_full(self, bra_indices, ket_indices, which: str = "full") -> int:
+        """Number of terms :meth:`block_eval_full` returns (since 1.1)."""
+        return self._block_count(lib.hexpr_block_count_full, bra_indices, ket_indices, which)
+
+    def _block_count(self, fn, bra_indices, ket_indices, which):
         bra = _as_int32_1d(bra_indices, "bra_indices")
         ket = _as_int32_1d(ket_indices, "ket_indices")
         out = ctypes.c_int()
-        check_status(lib.hexpr_block_count(
+        check_status(fn(
             self._handle,
             _ptri(bra), len(bra),
             _ptri(ket), len(ket),
@@ -545,7 +576,24 @@ class Drt:
         bra_pos[i] and ket_pos[i] are 0-based positions into bra_indices /
         ket_indices, not raw CSF indices; they, not ``ij``, are how a term is
         attributed to a pair.
+
+        Each ordered pair contributes one direction-selected decomposition;
+        :meth:`block_eval_full` gives the complete one for every pair.
         """
+        return self._block_eval(lib.hexpr_block_eval, bra_indices, ket_indices, which)
+
+    def block_eval_full(self, bra_indices, ket_indices,
+                        which: str = "full") -> Tuple[np.ndarray, ...]:
+        """Evaluate the block with the complete decomposition of every pair
+        (since 1.1).
+
+        Same arguments and return value as :meth:`block_eval`; each ordered
+        pair contributes exactly the terms of :meth:`pair_eval_full`, so a
+        block whose bra and ket sets are disjoint is complete.
+        """
+        return self._block_eval(lib.hexpr_block_eval_full, bra_indices, ket_indices, which)
+
+    def _block_eval(self, fn, bra_indices, ket_indices, which):
         which_int = _which_to_int(which)
         bra = _as_int32_1d(bra_indices, "bra_indices")
         ket = _as_int32_1d(ket_indices, "ket_indices")
@@ -556,7 +604,7 @@ class Drt:
         pqrs    = np.empty(max_t, dtype=np.int32)
         coef    = np.empty(max_t, dtype=np.float64)
         out_count = ctypes.c_int()
-        check_status(lib.hexpr_block_eval(
+        check_status(fn(
             self._handle,
             _ptri(bra), len(bra),
             _ptri(ket), len(ket),
@@ -768,6 +816,18 @@ def csf_pair_eval(bra_steps, ket_steps,
     drt = Drt.from_csfset(stacked, norb)
     # Row 0 is the bra, row 1 is the ket, whatever the canonical order is.
     return drt.pair_eval(0, 1, which)
+
+
+def csf_pair_eval_full(bra_steps, ket_steps,
+                       which: str = "full") -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """As :func:`csf_pair_eval`, but the complete decomposition of the
+    pair (:meth:`Drt.pair_eval_full`; since 1.1)."""
+    bra = np.ascontiguousarray(bra_steps, dtype=np.uint8)
+    ket = np.ascontiguousarray(ket_steps, dtype=np.uint8)
+    if bra.ndim != 1 or ket.ndim != 1 or len(bra) != len(ket):
+        raise ValueError("bra_steps and ket_steps must be 1-D of equal length")
+    drt = Drt.from_csfset(np.stack([bra, ket], axis=0), len(bra))
+    return drt.pair_eval_full(0, 1, which)
 
 
 def csf_block_eval(bra_csfs, ket_csfs,

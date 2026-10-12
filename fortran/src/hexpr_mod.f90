@@ -53,7 +53,7 @@ module hexpr_mod
   ! clash with the runtime functions hexpr_version_major/minor/patch.
   ! ----------------------------------------------------------------
   integer(c_int), parameter, public :: HEXPR_VMAJOR = 1_c_int
-  integer(c_int), parameter, public :: HEXPR_VMINOR = 0_c_int
+  integer(c_int), parameter, public :: HEXPR_VMINOR = 1_c_int
   integer(c_int), parameter, public :: HEXPR_VPATCH = 0_c_int
 
   ! ----------------------------------------------------------------
@@ -529,6 +529,61 @@ module hexpr_mod
       integer(c_int)              :: status
     end function c_hexpr_pair_eval
 
+    ! complete decomposition (since 1.1); signatures as the v1.0 calls
+    function c_hexpr_pair_count_full(drt, bra, ket, which, out_count) &
+        bind(C, name="hexpr_pair_count_full") result(status)
+      import :: c_ptr, c_int
+      implicit none
+      type(c_ptr),    value       :: drt
+      integer(c_int), value       :: bra, ket, which
+      integer(c_int), intent(out) :: out_count
+      integer(c_int)              :: status
+    end function c_hexpr_pair_count_full
+
+    function c_hexpr_pair_eval_full(drt, bra, ket, which, out_count, &
+                                     out_ij, out_pqrs, out_coef) &
+        bind(C, name="hexpr_pair_eval_full") result(status)
+      import :: c_ptr, c_int
+      implicit none
+      type(c_ptr),    value       :: drt
+      integer(c_int), value       :: bra, ket, which
+      integer(c_int), intent(out) :: out_count
+      type(c_ptr),    value       :: out_ij, out_pqrs, out_coef
+      integer(c_int)              :: status
+    end function c_hexpr_pair_eval_full
+
+    function c_hexpr_block_count_full(drt, bra_indices, n_bra, &
+                                       ket_indices, n_ket, which, out_count) &
+        bind(C, name="hexpr_block_count_full") result(status)
+      import :: c_ptr, c_int
+      implicit none
+      type(c_ptr),    value       :: drt
+      type(c_ptr),    value       :: bra_indices
+      integer(c_int), value       :: n_bra
+      type(c_ptr),    value       :: ket_indices
+      integer(c_int), value       :: n_ket, which
+      integer(c_int), intent(out) :: out_count
+      integer(c_int)              :: status
+    end function c_hexpr_block_count_full
+
+    function c_hexpr_block_eval_full(drt, bra_indices, n_bra, ket_indices, n_ket, &
+                                      which, out_count, &
+                                      out_bra_pos, out_ket_pos, &
+                                      out_ij, out_pqrs, out_coef) &
+        bind(C, name="hexpr_block_eval_full") result(status)
+      import :: c_ptr, c_int
+      implicit none
+      type(c_ptr),    value       :: drt
+      type(c_ptr),    value       :: bra_indices
+      integer(c_int), value       :: n_bra
+      type(c_ptr),    value       :: ket_indices
+      integer(c_int), value       :: n_ket, which
+      integer(c_int), intent(out) :: out_count
+      type(c_ptr),    value       :: out_bra_pos, out_ket_pos
+      type(c_ptr),    value       :: out_ij, out_pqrs, out_coef
+      integer(c_int)              :: status
+    end function c_hexpr_block_eval_full
+
     function c_hexpr_block_count(drt, bra_indices, n_bra, &
                                   ket_indices, n_ket, which, out_count) &
         bind(C, name="hexpr_block_count") result(status)
@@ -635,6 +690,8 @@ module hexpr_mod
   public :: hexpr_expr_show_full, hexpr_expr_show_one
   public :: hexpr_pair_count, hexpr_pair_max_terms, hexpr_pair_eval
   public :: hexpr_block_count, hexpr_block_max_terms, hexpr_block_eval
+  public :: hexpr_pair_count_full, hexpr_pair_eval_full
+  public :: hexpr_block_count_full, hexpr_block_eval_full
   public :: hexpr_subspace_count, hexpr_subspace_max_terms, hexpr_subspace_eval
 
 contains
@@ -1174,6 +1231,63 @@ contains
                                  c_loc(out_bra_pos), c_loc(out_ket_pos), &
                                  c_loc(out_ij), c_loc(out_pqrs), c_loc(out_coef))
   end function hexpr_block_eval
+
+  ! Complete decomposition (since 1.1): same arguments as hexpr_pair_count /
+  ! hexpr_pair_eval / hexpr_block_count / hexpr_block_eval, but each pair's
+  ! terms are the union of both argument orders of hexpr_pair_eval, with the
+  ! same coefficients, independent of the argument order.
+  function hexpr_pair_count_full(drt, bra, ket, which, out_count) result(status)
+    type(c_ptr),    value,  intent(in)  :: drt
+    integer(c_int),         intent(in)  :: bra, ket, which
+    integer(c_int),         intent(out) :: out_count
+    integer(c_int) :: status
+    status = c_hexpr_pair_count_full(drt, bra, ket, which, out_count)
+  end function hexpr_pair_count_full
+
+  function hexpr_pair_eval_full(drt, bra, ket, which, out_count, &
+                                 out_ij, out_pqrs, out_coef) result(status)
+    type(c_ptr),        value,  intent(in)  :: drt
+    integer(c_int),             intent(in)  :: bra, ket, which
+    integer(c_int),             intent(out) :: out_count
+    integer(c_int32_t), target, intent(out) :: out_ij(:), out_pqrs(:)
+    real(c_double),     target, intent(out) :: out_coef(:)
+    integer(c_int) :: status
+    status = c_hexpr_pair_eval_full(drt, bra, ket, which, out_count, &
+                                     c_loc(out_ij), c_loc(out_pqrs), c_loc(out_coef))
+  end function hexpr_pair_eval_full
+
+  function hexpr_block_count_full(drt, bra_indices, n_bra, ket_indices, n_ket, &
+                                   which, out_count) result(status)
+    type(c_ptr),    value,  intent(in)  :: drt
+    integer(c_int), target, intent(in)  :: bra_indices(:)
+    integer(c_int),         intent(in)  :: n_bra
+    integer(c_int), target, intent(in)  :: ket_indices(:)
+    integer(c_int),         intent(in)  :: n_ket, which
+    integer(c_int),         intent(out) :: out_count
+    integer(c_int) :: status
+    status = c_hexpr_block_count_full(drt, c_loc(bra_indices), n_bra, &
+                                       c_loc(ket_indices), n_ket, which, out_count)
+  end function hexpr_block_count_full
+
+  function hexpr_block_eval_full(drt, bra_indices, n_bra, ket_indices, n_ket, &
+                                  which, out_count, &
+                                  out_bra_pos, out_ket_pos, &
+                                  out_ij, out_pqrs, out_coef) result(status)
+    type(c_ptr),        value,  intent(in)  :: drt
+    integer(c_int),     target, intent(in)  :: bra_indices(:)
+    integer(c_int),             intent(in)  :: n_bra
+    integer(c_int),     target, intent(in)  :: ket_indices(:)
+    integer(c_int),             intent(in)  :: n_ket, which
+    integer(c_int),             intent(out) :: out_count
+    integer(c_int32_t), target, intent(out) :: out_bra_pos(:), out_ket_pos(:)
+    integer(c_int32_t), target, intent(out) :: out_ij(:), out_pqrs(:)
+    real(c_double),     target, intent(out) :: out_coef(:)
+    integer(c_int) :: status
+    status = c_hexpr_block_eval_full(drt, c_loc(bra_indices), n_bra, &
+                                      c_loc(ket_indices), n_ket, which, out_count, &
+                                      c_loc(out_bra_pos), c_loc(out_ket_pos), &
+                                      c_loc(out_ij), c_loc(out_pqrs), c_loc(out_coef))
+  end function hexpr_block_eval_full
 
   function hexpr_subspace_count(drt, indices, n, which, out_count) result(status)
     type(c_ptr),    value,  intent(in)  :: drt

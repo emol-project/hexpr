@@ -3,7 +3,7 @@ message: "If you use this software, please cite both the software and the method
 title: hexpr
 abstract: "C library and multi-language bindings for generating expressions of the CSF-based Hamiltonian matrix used in quantum-chemistry CI calculations."
 type: software
-version: 1.0.0
+version: 1.1.0
 license: MIT
 repository-code: "https://github.com/emol-project/hexpr"
 url: "https://github.com/emol-project/hexpr"
@@ -13,7 +13,7 @@ authors:
     orcid: "https://orcid.org/0009-0004-7674-5540"
   - family-names: Noro
     given-names: Takeshi
-date-released: "2026-09-26"
+date-released: "2026-10-12"
 doi: "10.5281/zenodo.22974832"
 identifiers:
   - type: doi
@@ -22,6 +22,7 @@ identifiers:
   - type: doi
     value: "10.5281/zenodo.22974833"
     description: "Version 1.0.0"
+  # TODO after the v1.1.0 release: add its version DOI from the Zenodo record
 preferred-citation:
   type: article
   title: "hexpr: A Configuration State Function Based Hamiltonian Matrix Element Expression Library"

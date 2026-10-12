@@ -166,6 +166,7 @@ For full `(ij, pqrs)` decode logic, see
 | `hexpr.Drt.from_csfset(csfs, norb)` | classmethod | Build a (sub-)DRT from an explicit CSF set |
 | `hexpr.Expression(drt)` | class | Build the full energy expression |
 | `hexpr.csf_pair_eval(bra_steps, ket_steps, which='full')` | function | High-level pair evaluation from step-code sequences |
+| `hexpr.csf_pair_eval_full(bra_steps, ket_steps, which='full')` | function | As `csf_pair_eval`, complete decomposition (since 1.1) |
 | `hexpr.csf_block_eval(bra_csfs, ket_csfs, which='full')` | function | High-level rectangular block evaluation |
 | `hexpr.csf_subspace_eval(csfs, which='full')` | function | High-level square subspace evaluation |
 | `hexpr.step_parse(s, norb)` | function | Parse `"eudf..."` string to a `uint8` step-code array of length `norb` |
@@ -188,6 +189,8 @@ For full `(ij, pqrs)` decode logic, see
 | `drt.pair_count(bra, ket, which='full')` | method | Term count for one pair |
 | `drt.pair_max_terms(which='full')` | method | Upper bound on terms for any single pair |
 | `drt.pair_eval(bra, ket, which='full')` | method | Pair evaluation; returns `(ij, pqrs, coef)` |
+| `drt.pair_eval_full(bra, ket, which='full')` / `drt.pair_count_full(...)` | method | Complete decomposition of the pair, either argument order (since 1.1) |
+| `drt.block_eval_full(bra_indices, ket_indices, which='full')` / `drt.block_count_full(...)` | method | Block with the complete decomposition of every pair (since 1.1) |
 | `drt.block_count(bra_indices, ket_indices, which='full')` | method | Term count for a rectangular block |
 | `drt.block_max_terms(n_bra, n_ket, which='full')` | method | Upper bound on terms for a block |
 | `drt.block_eval(bra_indices, ket_indices, which='full')` | method | Block evaluation; returns `(ij, pqrs, coef, bra_pos, ket_pos)` |

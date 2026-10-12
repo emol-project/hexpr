@@ -316,8 +316,8 @@ static void append_ot(ot_vec_t *all, ot_vec_t *src)
 ot_vec_t pair_eval_internal(const hexpr_drt_t *drt, int bra, int ket)
 {
     hexpr_init();
-    init_constants();          /* seeds hexpr_root_val (shared roots) before any walk */
-    hexpr_lk_ensure_init();    /* shared L(k) table must be initialized before the hot line */
+    init_constants();          /* no-op since 1.1 (the roots are constants) */
+    hexpr_lk_ensure_init();    /* this thread's L(k) table must be initialized before the hot line */
     /* The pair path shares the SAME L(k) table as the whole path but stays in
      * OFF: it is NOT warmed, so the hot line fills-on-miss (uncounted). This is
      * correct -- the enable_pair rows (incl. case03) on per-pair sub-DRTs may need

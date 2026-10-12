@@ -17,7 +17,7 @@ extern "C" {
 
 /* ===== Versioning ============================================ */
 #define HEXPR_VERSION_MAJOR 1
-#define HEXPR_VERSION_MINOR 0
+#define HEXPR_VERSION_MINOR 1
 #define HEXPR_VERSION_PATCH 0
 
 const char *hexpr_version_string(void);
@@ -282,7 +282,10 @@ hexpr_status_t hexpr_expr_show_one (const hexpr_expr_t *, FILE *out);
 
 /* The per-pair / block / subspace evaluators return one direction-selected
  * decomposition of H[I,J]; see docs/PAIR_API_SEMANTICS.md for the directional
- * semantics and how to obtain the complete decomposition. */
+ * semantics and how to obtain the complete decomposition. Since v1.1 the
+ * *_full variants (hexpr_pair_count_full/_eval_full,
+ * hexpr_block_count_full/_eval_full) return the complete decomposition of
+ * each pair in one call, independent of the argument order. */
 
 /* --- Index convention for the six calls below ---
  *
@@ -320,6 +323,20 @@ hexpr_status_t hexpr_pair_eval(const hexpr_drt_t *drt, int bra, int ket,
                                 int32_t *out_ij, int32_t *out_pqrs,
                                 double *out_coef);
 
+/* Complete decomposition of a single pair (since v1.1).
+ * Same arguments, errors and index convention as hexpr_pair_count /
+ * hexpr_pair_eval. The terms are the union of hexpr_pair_eval(bra, ket) and
+ * hexpr_pair_eval(ket, bra), with the same coefficients, and the result does
+ * not depend on the argument order. Size the outputs with
+ * hexpr_pair_max_terms or hexpr_pair_count_full. */
+hexpr_status_t hexpr_pair_count_full(const hexpr_drt_t *drt, int bra, int ket,
+                                      hexpr_expr_which_t which, int *out_count);
+hexpr_status_t hexpr_pair_eval_full(const hexpr_drt_t *drt, int bra, int ket,
+                                     hexpr_expr_which_t which,
+                                     int *out_count,
+                                     int32_t *out_ij, int32_t *out_pqrs,
+                                     double *out_coef);
+
 /* ===== Block evaluation (rectangular bra x ket) ============= */
 
 /* Count expression terms over a rectangular bra x ket block.
@@ -345,6 +362,28 @@ hexpr_status_t hexpr_block_eval(const hexpr_drt_t *drt,
                                  int32_t *out_ij,
                                  int32_t *out_pqrs,
                                  double  *out_coef);
+
+/* Complete decomposition over a rectangular block (since v1.1).
+ * Same arguments, errors and outputs as hexpr_block_count / hexpr_block_eval,
+ * but every ordered pair (bra_indices[i], ket_indices[j]) contributes exactly
+ * the terms of hexpr_pair_eval_full, so a block whose bra and ket sets are
+ * disjoint is complete for every pair. Size the outputs with
+ * hexpr_block_max_terms or hexpr_block_count_full. */
+hexpr_status_t hexpr_block_count_full(const hexpr_drt_t *drt,
+                                       const int *bra_indices, int n_bra,
+                                       const int *ket_indices, int n_ket,
+                                       hexpr_expr_which_t which,
+                                       int *out_count);
+hexpr_status_t hexpr_block_eval_full(const hexpr_drt_t *drt,
+                                      const int *bra_indices, int n_bra,
+                                      const int *ket_indices, int n_ket,
+                                      hexpr_expr_which_t which,
+                                      int *out_count,
+                                      int32_t *out_bra_pos,
+                                      int32_t *out_ket_pos,
+                                      int32_t *out_ij,
+                                      int32_t *out_pqrs,
+                                      double  *out_coef);
 
 /* ===== Subspace evaluation (bra == ket) ===================== */
 

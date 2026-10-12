@@ -93,14 +93,28 @@ static unsigned int htab_hash(int orb, int nve, int is)
  * @return a new table; release with @ref htab_free.
  * @note Internal to construction only (not the public ::hexpr_drt_t).
  */
-static htab_t *htab_new(void)
+static htab_t *htab_new_n(int nbuckets)
 {
     htab_t *h = calloc(1, sizeof(htab_t));
-    h->nbuckets = HTAB_INIT;
+    h->nbuckets = nbuckets;
     h->buckets = calloc(h->nbuckets, sizeof(htab_entry_t *));
     h->order_cap = 256;
     h->order = malloc(h->order_cap * sizeof(node_t *));
     return h;
+}
+
+static htab_t *htab_new(void) { return htab_new_n(HTAB_INIT); }
+
+/* Buckets for at most @p nodes entries: a power of two >= 2*nodes, between 64
+ * and HTAB_INIT. The bucket count only affects lookup chains, never the
+ * output (iteration uses the insertion-order list); small tables matter for
+ * the many 1- and 2-CSF sub-DRTs of the pair path, where clearing and
+ * freeing HTAB_INIT buckets cost more than the construction itself. */
+static int htab_size_for(long nodes)
+{
+    int nb = 64;
+    while (nb < HTAB_INIT && nb < 2 * nodes) nb *= 2;
+    return nb;
 }
 
 /**
@@ -282,7 +296,7 @@ static node_t *node_new(int orb, int nve, int is,
  * Role: the join test used by @ref generate_valence_node at the valence/external
  * boundary -- a valence node is only kept if it connects into the
  * already-built downstream graph. The four candidate codes are the node's four
- * step successors at @c orb+1: the @c (ƒ¢nve,ƒ¢is) offsets @c (0,0), @c (1,+1),
+ * step successors at @c orb+1: the @c (ï¿½ï¿½nve,ï¿½ï¿½is) offsets @c (0,0), @c (1,+1),
  * @c (1,-1), @c (2,0).
  *
  * DOMAIN (Shavitt/Paldus DRT; used by the paper, not re-derived there):
@@ -442,7 +456,7 @@ static void foci_generate_core_node(htab_t *h_nodes, const mo_t *mo, const info_
  *
  * Role: phase 2 of @ref hexpr_drt_create for SOCI. Working down from the target
  * @c (nve,sp2), each external orbital @c k below the last gets up to five codes
- * (the @c nve-2 spin fan @c sp2/sp2-2/sp2+2, plus @c nve-1 at @c sp2}1), while
+ * (the @c nve-2 spin fan @c sp2/sp2-2/sp2+2, plus @c nve-1 at @c sp2ï¿½}1), while
  * every @c k gets the on-target @c (nve,sp2) node. A trailing guard handles the
  * degenerate no-external case by seeding the top node directly.
  *
@@ -594,8 +608,8 @@ static int generate_valence_node(int orb, int nve, int is,
  * node missing from EITHER reachable set.
  *
  * Two passes share one @c queue buffer: the forward pass follows the four step
- * successors @c (ƒ¢orb=+1) seeded at the bottom; the backward pass follows the
- * four predecessors @c (ƒ¢orb=-1) seeded at the top. Reachability is tracked in
+ * successors @c (ï¿½ï¿½orb=+1) seeded at the bottom; the backward pass follows the
+ * four predecessors @c (ï¿½ï¿½orb=-1) seeded at the top. Reachability is tracked in
  * @c rfb (from-bottom) and @c rft (from-top) flag arrays indexed by @c order[]
  * position. Early-return guards bail out cleanly (freeing scratch) if the
  * bottom or top code is absent.
@@ -1399,7 +1413,7 @@ hexpr_drt_t *hexpr_drt_from_csfset(int norb,
         return NULL;
     }
 
-    htab_t *h_nodes = htab_new();
+    htab_t *h_nodes = htab_new_n(htab_size_for((long)n_csfs * norb + 1));
 
     /* Insert bottom node (0,0,0) */
     {
@@ -1497,7 +1511,7 @@ hexpr_drt_t *hexpr_drt_from_csfset(int norb,
     if (top_index < 0) { free(nodes); return NULL; }   /* shouldn't happen */
 
     /* Build code2num and wire upper/lower arcs */
-    htab_t *code2num_h = htab_new();
+    htab_t *code2num_h = htab_new_n(htab_size_for(ncount));
     for (int i = 0; i < ncount; i++) {
         node_t *proxy = calloc(1, sizeof(node_t));
         proxy->orb = nodes[i].orb;

@@ -238,6 +238,8 @@ argument lists and return types, see the source:
 | `hexpr_subspace_count(drt, idx, n, which, out_count)` | function | Term count for a square subspace |
 | `hexpr_subspace_max_terms(drt, n, which, out_max)` | function | Upper bound on terms for a subspace |
 | `hexpr_subspace_eval(drt, idx, n, which, out_count, bra_pos, ket_pos, ij, pqrs, coef)` | function | Subspace evaluation |
+| `hexpr_pair_count_full` / `hexpr_pair_eval_full` (arguments as `hexpr_pair_count` / `hexpr_pair_eval`) | function | Complete decomposition of one pair, either argument order (since 1.1) |
+| `hexpr_block_count_full` / `hexpr_block_eval_full` (arguments as `hexpr_block_count` / `hexpr_block_eval`) | function | Block with the complete decomposition of every pair (since 1.1) |
 
 **F77 path**: underscore-suffixed names (`hexpr_init_`, `hexpr_drt_create_`,
 `hexpr_pair_eval_`, etc.) are callable from Fortran 77 programs by linking

@@ -135,7 +135,7 @@ Source: [`c/wig/example.c`](wig/example.c)
 
 ## Library structure
 c/
-+-- include/hexpr.h          Public API header (v1.0.0, frozen)
++-- include/hexpr.h          Public API header (v1.1.0; 1.0.0 declarations unchanged)
 +-- src/
 |   +-- common/              Shared utilities: fmt, darr, dhash, sort
 |   +-- loopgen/             DRT construction + Brooks expression
@@ -291,6 +291,8 @@ them from `hexpr_csf_ndets`, which is exact rather than an upper bound:
 `out_coef` needs `ndets`, where `nwords = (norb + 63) / 64`.
 
 Thread safety: read-only queries on a handle are reentrant across threads.
+This includes the pair and block evaluations (since 1.1.0; their L(k) cache
+is per thread), on one shared handle or on handles built in each thread.
 Constructors and destructors are not reentrant on the same handle.
 `hexpr_init`/`hexpr_shutdown` must be called from a single thread before
 workers start. `hexpr_last_error` is thread-local (C11 `_Thread_local`).
@@ -347,6 +349,10 @@ safe for every constructible DRT.
 
 For the semantics of `pair_eval` and the per-direction
 decomposition convention, see [PAIR_API_SEMANTICS.md](../docs/PAIR_API_SEMANTICS.md).
+Since 1.1, `hexpr_pair_eval_full` / `hexpr_pair_count_full` and
+`hexpr_block_eval_full` / `hexpr_block_count_full` return the complete
+decomposition of each pair in one call, independent of the argument order,
+and are faster than evaluating both orders with `hexpr_pair_eval`.
 
 ## See also
 

@@ -460,6 +460,74 @@ function block_eval(drt::Drt, bra_indices, ket_indices; which::Symbol=:full)
     ij[1:n], pqrs[1:n], coef[1:n], bra_pos[1:n], ket_pos[1:n]
 end
 
+# Complete decomposition (since 1.1). Same arguments and results as
+# pair_count/pair_eval/block_count/block_eval, but each pair's terms are the
+# union of both argument orders of pair_eval (with the same coefficients), and
+# do not depend on the argument order. See docs/PAIR_API_SEMANTICS.md.
+function pair_count_full(drt::Drt, bra::Integer, ket::Integer; which::Symbol=:full)
+    out = Ref{Cint}(0)
+    status = ccall((:hexpr_pair_count_full, _LIBHEXPR), Cint,
+                   (Ptr{Cvoid}, Cint, Cint, Cint, Ref{Cint}),
+                   drt.handle, Cint(bra), Cint(ket), _which_to_cint(which), out)
+    status == HEXPR_OK || error("hexpr_pair_count_full failed: $(last_error())")
+    Int(out[])
+end
+
+function pair_eval_full(drt::Drt, bra::Integer, ket::Integer; which::Symbol=:full)
+    which_int = _which_to_cint(which)
+    max_t = pair_max_terms(drt; which=which)
+    ij   = Vector{Int32}(undef, max_t)
+    pqrs = Vector{Int32}(undef, max_t)
+    coef = Vector{Float64}(undef, max_t)
+    out_count = Ref{Cint}(0)
+    status = ccall((:hexpr_pair_eval_full, _LIBHEXPR), Cint,
+                   (Ptr{Cvoid}, Cint, Cint, Cint, Ref{Cint},
+                    Ptr{Int32}, Ptr{Int32}, Ptr{Float64}),
+                   drt.handle, Cint(bra), Cint(ket), which_int,
+                   out_count, ij, pqrs, coef)
+    status == HEXPR_OK || error("hexpr_pair_eval_full failed: $(last_error())")
+    n = Int(out_count[])
+    ij[1:n], pqrs[1:n], coef[1:n]
+end
+
+function block_count_full(drt::Drt, bra_indices, ket_indices; which::Symbol=:full)
+    bra = Int32.(collect(bra_indices))
+    ket = Int32.(collect(ket_indices))
+    out = Ref{Cint}(0)
+    status = ccall((:hexpr_block_count_full, _LIBHEXPR), Cint,
+                   (Ptr{Cvoid}, Ptr{Int32}, Cint, Ptr{Int32}, Cint, Cint, Ref{Cint}),
+                   drt.handle, bra, Cint(length(bra)), ket, Cint(length(ket)),
+                   _which_to_cint(which), out)
+    status == HEXPR_OK || error("hexpr_block_count_full failed: $(last_error())")
+    Int(out[])
+end
+
+function block_eval_full(drt::Drt, bra_indices, ket_indices; which::Symbol=:full)
+    which_int = _which_to_cint(which)
+    bra = Int32.(collect(bra_indices))
+    ket = Int32.(collect(ket_indices))
+    n_bra, n_ket = length(bra), length(ket)
+    max_t = block_max_terms(drt, n_bra, n_ket; which=which)
+    bra_pos = Vector{Int32}(undef, max_t)
+    ket_pos = Vector{Int32}(undef, max_t)
+    ij      = Vector{Int32}(undef, max_t)
+    pqrs    = Vector{Int32}(undef, max_t)
+    coef    = Vector{Float64}(undef, max_t)
+    out_count = Ref{Cint}(0)
+    status = ccall((:hexpr_block_eval_full, _LIBHEXPR), Cint,
+                   (Ptr{Cvoid},
+                    Ptr{Int32}, Cint, Ptr{Int32}, Cint,
+                    Cint, Ref{Cint},
+                    Ptr{Int32}, Ptr{Int32}, Ptr{Int32}, Ptr{Int32}, Ptr{Float64}),
+                   drt.handle,
+                   bra, Cint(n_bra), ket, Cint(n_ket),
+                   which_int, out_count,
+                   bra_pos, ket_pos, ij, pqrs, coef)
+    status == HEXPR_OK || error("hexpr_block_eval_full failed: $(last_error())")
+    n = Int(out_count[])
+    ij[1:n], pqrs[1:n], coef[1:n], bra_pos[1:n], ket_pos[1:n]
+end
+
 function subspace_count(drt::Drt, indices; which::Symbol=:full)
     idx = Int32.(collect(indices))
     out = Ref{Cint}(0)
@@ -526,6 +594,19 @@ function csf_pair_eval(bra_steps::AbstractVector{UInt8},
     pair_eval(sub, Int32(0), Int32(1); which=which)
 end
 
+# As csf_pair_eval, but the complete decomposition of the pair (since 1.1).
+function csf_pair_eval_full(bra_steps::AbstractVector{UInt8},
+                            ket_steps::AbstractVector{UInt8};
+                            which::Symbol=:full)
+    norb_val = length(bra_steps)
+    length(ket_steps) == norb_val ||
+        error("bra_steps length $norb_val != ket_steps length $(length(ket_steps))")
+    stacked = Matrix{UInt8}(undef, 2, norb_val)
+    stacked[1, :] = bra_steps
+    stacked[2, :] = ket_steps
+    pair_eval_full(Drt(stacked, norb_val), Int32(0), Int32(1); which=which)
+end
+
 function csf_block_eval(bra_csfs::AbstractMatrix{UInt8},
                         ket_csfs::AbstractMatrix{UInt8};
                         which::Symbol=:full)
@@ -561,10 +642,10 @@ export drt_node_info, drt_show
 export nterms_full, nterms_one, read_full, read_one, expr_show_full, expr_show_one
 export csf_index, csf_steps, step_parse
 export csf_ndets, csf_to_dets
-export pair_count, pair_max_terms, pair_eval
-export block_count, block_max_terms, block_eval
+export pair_count, pair_max_terms, pair_eval, pair_count_full, pair_eval_full
+export block_count, block_max_terms, block_eval, block_count_full, block_eval_full
 export subspace_count, subspace_max_terms, subspace_eval
-export csf_pair_eval, csf_block_eval, csf_subspace_eval
+export csf_pair_eval, csf_pair_eval_full, csf_block_eval, csf_subspace_eval
 export HEXPR_OK, HEXPR_DRT_SOCI, HEXPR_DRT_FOCI, HEXPR_DRT_CSFSET
 export HEXPR_EXPR_FULL, HEXPR_EXPR_ONE
 export HEXPR_STEP_E, HEXPR_STEP_U, HEXPR_STEP_D, HEXPR_STEP_F

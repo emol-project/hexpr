@@ -498,3 +498,70 @@ class TestErrorPaths:
         steps = drt.csfs()[0]
         with pytest.raises(ValueError, match="which"):
             hexpr.csf_pair_eval(steps, steps, which="bad")
+
+
+# ---------------------------------------------------------------------------
+# Complete-decomposition calls (since 1.1)
+# ---------------------------------------------------------------------------
+
+def _as_dict(ij, pqrs, coef):
+    d = {}
+    for a, b, c in zip(ij, pqrs, coef):
+        key = (int(a), int(b))
+        assert key not in d, f"repeated key {key}"
+        d[key] = float(c)
+    return d
+
+
+class TestFullDecomposition:
+    def setup_method(self):
+        self.drt = hexpr.Drt(kind="soci", nve=4, spin_x2=0,
+                              ncore=0, nval=4, next_=0)
+
+    def test_version(self):
+        assert hexpr.version() == "1.1.0"
+
+    @pytest.mark.parametrize("which", ["full", "one"])
+    def test_pair_eval_full_is_union_of_directions(self, which):
+        drt, n = self.drt, self.drt.ncsfs
+        strict = 0
+        for i in range(n):
+            for j in range(i, n):
+                a = drt.pair_eval(i, j, which)
+                b = drt.pair_eval(j, i, which)
+                union = _as_dict(*a)
+                for key, c in _as_dict(*b).items():
+                    if key in union:
+                        assert union[key] == pytest.approx(c, abs=1e-12)
+                    union[key] = c
+                f1 = _as_dict(*drt.pair_eval_full(i, j, which))
+                f2 = _as_dict(*drt.pair_eval_full(j, i, which))
+                assert f1.keys() == union.keys() == f2.keys()
+                for key, c in union.items():
+                    assert f1[key] == pytest.approx(c, abs=1e-12)
+                    assert f2[key] == pytest.approx(c, abs=1e-12)
+                assert drt.pair_count_full(i, j, which) == len(f1)
+                strict += len(a[0]) != len(b[0])
+        if which == "full":  # the case does exercise the directional split
+            assert strict > 0
+
+    def test_block_eval_full_disjoint_block(self):
+        drt = self.drt
+        bra, ket = [0, 1, 2], [17, 18, 19]
+        ij, pqrs, coef, bp, kp = drt.block_eval_full(bra, ket)
+        assert drt.block_count_full(bra, ket) == len(ij)
+        for p, i in enumerate(bra):
+            for q, j in enumerate(ket):
+                sel = (bp == p) & (kp == q)
+                got = _as_dict(ij[sel], pqrs[sel], coef[sel])
+                assert got == pytest.approx(_as_dict(*drt.pair_eval_full(i, j)))
+
+    def test_csf_pair_eval_full(self):
+        csfs = self.drt.csfs()
+        for i, j in [(0, 1), (1, 0), (3, 3), (2, 7)]:
+            # ij is a pair address in each DRT's own space; compare by pqrs
+            _, p_hi, c_hi = hexpr.csf_pair_eval_full(csfs[i], csfs[j])
+            _, p_lo, c_lo = self.drt.pair_eval_full(i, j)
+            hi = dict(zip(p_hi.tolist(), c_hi.tolist()))
+            lo = dict(zip(p_lo.tolist(), c_lo.tolist()))
+            assert len(hi) == len(p_hi) and hi == pytest.approx(lo)

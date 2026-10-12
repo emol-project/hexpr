@@ -10,7 +10,7 @@ class TestSmoke < Minitest::Test
 
   def test_version_components
     assert_equal 1, HExpr.version_major
-    assert_equal 0, HExpr.version_minor
+    assert_equal 1, HExpr.version_minor
     assert_equal 0, HExpr.version_patch
   end
 end

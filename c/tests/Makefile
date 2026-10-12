@@ -40,7 +40,7 @@ TESTS_CORE = test_compare test_wigner test_drt test_expr test_full \
              test_pair_one_4o4e test_pair_full_4o4e test_block_subspace_4o4e \
              test_pair_aggregate test_max_terms test_drt_from_csfset \
              test_csfset_pair test_ncsfs_consistency test_lk_table test_lk_twophase \
-             test_csf2det
+             test_csf2det test_pair_full_union test_pair_threads
 
 .PHONY: all check check-slow clean
 
@@ -97,6 +97,12 @@ test_csfset_pair: test_csfset_pair.c csfset_oracle_util.h
 test_ncsfs_consistency: test_ncsfs_consistency.c
 	$(CC) $(CFLAGS) $(CPPFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
+test_pair_full_union: test_pair_full_union.c
+	$(CC) $(CFLAGS) $(CPPFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+
+test_pair_threads: test_pair_threads.c
+	$(CC) $(CFLAGS) $(CPPFLAGS) $(LDFLAGS) -pthread -o $@ $^ $(LDLIBS)
+
 test_csf2det: test_csf2det.c
 	$(CC) $(CFLAGS) $(CPPFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
@@ -139,6 +145,8 @@ check: $(TESTS_CORE)
 	LD_LIBRARY_PATH=$(LIBDIR) ./test_csfset_pair                           || failures=$$((failures+1)); \
 	LD_LIBRARY_PATH=$(LIBDIR) ./test_ncsfs_consistency                     || failures=$$((failures+1)); \
 	LD_LIBRARY_PATH=$(LIBDIR) ./test_csf2det                               || failures=$$((failures+1)); \
+	LD_LIBRARY_PATH=$(LIBDIR) ./test_pair_full_union                       || failures=$$((failures+1)); \
+	LD_LIBRARY_PATH=$(LIBDIR) ./test_pair_threads                          || failures=$$((failures+1)); \
 	LD_LIBRARY_PATH=$(LIBDIR) ./test_lk_table                              || failures=$$((failures+1)); \
 	LD_LIBRARY_PATH=$(LIBDIR) ./test_lk_twophase                           || failures=$$((failures+1)); \
 	if [ $$failures -eq 0 ]; then echo "ALL TESTS PASSED"; else echo "$$failures TEST(S) FAILED"; fi; \

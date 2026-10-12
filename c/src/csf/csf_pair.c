@@ -104,12 +104,40 @@ static hexpr_status_t input_to_walk(const hexpr_drt_t *drt, int idx,
     return HEXPR_OK;
 }
 
+/** @brief qsort order on (ij, pqrs). */
+static int term_key_cmp(const void *a, const void *b)
+{
+    const out_term_t *x = a, *y = b;
+    if (x->ij != y->ij) return x->ij < y->ij ? -1 : 1;
+    if (x->pqrs != y->pqrs) return x->pqrs < y->pqrs ? -1 : 1;
+    return 0;
+}
+
+/**
+ * @brief Sort terms by (ij, pqrs) and keep one term per key.
+ * @param v term vector, modified in place.
+ * @note A key returned by both directions carries the same coefficient (G5),
+ *       so keeping the first copy loses nothing.
+ */
+static void merge_terms(ot_vec_t *v)
+{
+    if (v->size < 2) return;
+    qsort(v->data, (size_t)v->size, sizeof(out_term_t), term_key_cmp);
+    int out = 1;
+    for (int i = 1; i < v->size; i++)
+        if (term_key_cmp(&v->data[i], &v->data[out - 1]) != 0)
+            v->data[out++] = v->data[i];
+    v->size = out;
+}
+
 /* Evaluate one pair by building a per-pair sub-DRT, then patch global ij. */
 /**
  * @brief Evaluate the coupling terms of one (bra, ket) CSF pair by building a
  *        sub-DRT that contains only those CSFs, then relabel @c ij to the global pair.
  * @param drt the full DRT the canonical indices @p bra / @p ket address.
  * @param bra,ket canonical CSF indices of the pair.
+ * @param full 0 = the v1.0 direction-selected set; 1 = the complete
+ *        decomposition (the v1.1 *_full calls).
  * @return an ::ot_vec_t of contributing terms; the CALLER owns and must free
  *         @c .data. Empty (NULL data) on allocation failure or an invalid pair.
  *
@@ -139,7 +167,8 @@ static hexpr_status_t input_to_walk(const hexpr_drt_t *drt, int idx,
  * (hexpr_drt_from_csfset). Canonical indexing follows the Shavitt addressing
  * documented in csf_lookup.c. See Sec. 2.4, Eq.12, Eq.16, Sec. 4.1.
  */
-static ot_vec_t pair_via_subdrt(const hexpr_drt_t *drt, int bra, int ket)
+static ot_vec_t pair_via_subdrt(const hexpr_drt_t *drt, int bra, int ket,
+                                int full)
 {
     ot_vec_t empty = {NULL, 0, 0};
     int norb = hexpr_drt_norb(drt);
@@ -176,9 +205,29 @@ static ot_vec_t pair_via_subdrt(const hexpr_drt_t *drt, int bra, int ket)
         hexpr_drt_destroy(sub);
         return empty;
     }
+    ot_vec_t result;
+    if (!full) {
+        /* v1.0: one direction-selected decomposition. */
+        result = pair_eval_internal(sub, sub_bra, sub_ket);
+    } else {
+        /* v1.1 *_full: the union of both directions (G4), merged here. Each
+         * direction's loop search follows only the bra (g) and ket (f) walks,
+         * which pair_eval_internal's filters would keep anyway; that is what
+         * makes the two directions together cheaper than one unrestricted
+         * one. The union equals that of the unrestricted directions
+         * (c/tests/test_pair_full_union.c). */
+        hexpr_loopgen_set_walks(sub, bra_steps, ket_steps);
+        result = pair_eval_internal(sub, sub_bra, sub_ket);
+        if (sub_bra != sub_ket) {
+            hexpr_loopgen_set_walks(sub, ket_steps, bra_steps);
+            ot_vec_t back = pair_eval_internal(sub, sub_ket, sub_bra);
+            for (int i = 0; i < back.size; i++) ot_push(&result, &back.data[i]);
+            free(back.data);
+        }
+        hexpr_loopgen_set_walks(NULL, NULL, NULL);
+        merge_terms(&result);
+    }
     free(bra_steps); free(ket_steps);
-
-    ot_vec_t result = pair_eval_internal(sub, sub_bra, sub_ket);
     hexpr_drt_destroy(sub);
 
     /* Terms carry the sub-DRT-local pair address; rewrite it to the global one
@@ -199,6 +248,7 @@ static ot_vec_t pair_via_subdrt(const hexpr_drt_t *drt, int bra, int ket)
  * @param which @c HEXPR_EXPR_FULL counts all terms; @c HEXPR_EXPR_ONE counts only
  *              one-electron terms.
  * @param[out] out_count receives the term count.
+ * @param full 0 = direction-selected set, 1 = complete decomposition.
  * @return @c HEXPR_OK; @c HEXPR_ERR_INVALID_ARG on NULL; @c HEXPR_ERR_RANGE if an
  *         index is out of @c [0, hexpr_drt_ncsfs()).
  *
@@ -211,8 +261,9 @@ static ot_vec_t pair_via_subdrt(const hexpr_drt_t *drt, int bra, int ket)
  *       @c n_oel = @f$ \mathit{norb}(\mathit{norb}+1)/2 @f$ is the same boundary
  *       documented by @c expr.c's @c hexpr_expr_build, and is not re-questioned here.
  */
-hexpr_status_t hexpr_pair_count(const hexpr_drt_t *drt, int bra, int ket,
-                                 hexpr_expr_which_t which, int *out_count)
+static hexpr_status_t pair_count_impl(const hexpr_drt_t *drt, int bra, int ket,
+                                      hexpr_expr_which_t which, int *out_count,
+                                      int full)
 {
     if (!drt || !out_count) return HEXPR_ERR_INVALID_ARG;
     unsigned char *scratch = malloc((size_t)hexpr_drt_norb(drt));
@@ -225,7 +276,7 @@ hexpr_status_t hexpr_pair_count(const hexpr_drt_t *drt, int bra, int ket,
     free(scratch);
 
     int n_oel = hexpr_drt_norb(drt); n_oel = n_oel * (n_oel + 1) / 2;
-    ot_vec_t v = pair_via_subdrt(drt, wbra, wket);
+    ot_vec_t v = pair_via_subdrt(drt, wbra, wket, full);
     /* Count terms, dropping two-electron ones (pqrs >= n_oel) in ONE mode. */
     int cnt = 0;
     for (int i = 0; i < v.size; i++) {
@@ -248,6 +299,7 @@ hexpr_status_t hexpr_pair_count(const hexpr_drt_t *drt, int bra, int ket,
  * @param[out] out_count receives the number of terms written.
  * @param[out] out_ij,out_pqrs,out_coef parallel output arrays; each may be NULL
  *             to skip that column.
+ * @param full 0 = direction-selected set, 1 = complete decomposition.
  * @return @c HEXPR_OK; @c HEXPR_ERR_INVALID_ARG on NULL drt/out_count;
  *         @c HEXPR_ERR_RANGE if an index is out of range.
  *
@@ -261,9 +313,10 @@ hexpr_status_t hexpr_pair_count(const hexpr_drt_t *drt, int bra, int ket,
  *       one-/two-electron split per @c expr.c (not re-questioned here). Each
  *       output pointer is optional.
  */
-hexpr_status_t hexpr_pair_eval(const hexpr_drt_t *drt, int bra, int ket,
-                                hexpr_expr_which_t which, int *out_count,
-                                int32_t *out_ij, int32_t *out_pqrs, double *out_coef)
+static hexpr_status_t pair_eval_impl(const hexpr_drt_t *drt, int bra, int ket,
+                                     hexpr_expr_which_t which, int *out_count,
+                                     int32_t *out_ij, int32_t *out_pqrs,
+                                     double *out_coef, int full)
 {
     if (!drt || !out_count) return HEXPR_ERR_INVALID_ARG;
     unsigned char *scratch = malloc((size_t)hexpr_drt_norb(drt));
@@ -276,7 +329,7 @@ hexpr_status_t hexpr_pair_eval(const hexpr_drt_t *drt, int bra, int ket,
     free(scratch);
 
     int n_oel = hexpr_drt_norb(drt); n_oel = n_oel * (n_oel + 1) / 2;
-    ot_vec_t v = pair_via_subdrt(drt, wbra, wket);
+    ot_vec_t v = pair_via_subdrt(drt, wbra, wket, full);
     /* Copy kept terms into the (optional) parallel output columns; k counts
      * survivors, skipping two-electron terms in ONE mode. */
     int k = 0;
@@ -294,6 +347,56 @@ hexpr_status_t hexpr_pair_eval(const hexpr_drt_t *drt, int bra, int ket,
 }
 
 /**
+ * @brief Count the terms of one (bra, ket) pair (v1.0 direction-selected set).
+ * @note Wrapper over @ref pair_count_impl; see its documentation.
+ */
+hexpr_status_t hexpr_pair_count(const hexpr_drt_t *drt, int bra, int ket,
+                                 hexpr_expr_which_t which, int *out_count)
+{
+    return pair_count_impl(drt, bra, ket, which, out_count, 0);
+}
+
+/**
+ * @brief Evaluate one (bra, ket) pair (v1.0 direction-selected set).
+ * @note Wrapper over @ref pair_eval_impl; see its documentation.
+ */
+hexpr_status_t hexpr_pair_eval(const hexpr_drt_t *drt, int bra, int ket,
+                                hexpr_expr_which_t which, int *out_count,
+                                int32_t *out_ij, int32_t *out_pqrs, double *out_coef)
+{
+    return pair_eval_impl(drt, bra, ket, which, out_count,
+                          out_ij, out_pqrs, out_coef, 0);
+}
+
+/**
+ * @brief Count the terms of the complete decomposition of H[bra, ket] (v1.1).
+ * @note Same arguments and errors as @ref hexpr_pair_count. The count is that
+ *       of @ref hexpr_pair_eval_full and does not depend on the argument order.
+ */
+hexpr_status_t hexpr_pair_count_full(const hexpr_drt_t *drt, int bra, int ket,
+                                      hexpr_expr_which_t which, int *out_count)
+{
+    return pair_count_impl(drt, bra, ket, which, out_count, 1);
+}
+
+/**
+ * @brief Evaluate the complete decomposition of H[bra, ket] in one call (v1.1).
+ * @note Same arguments and errors as @ref hexpr_pair_eval. The term set is the
+ *       union of what @ref hexpr_pair_eval returns for (bra, ket) and for
+ *       (ket, bra), with the same coefficients, and it is the same for either
+ *       argument order (as is @c ij, a canonical pair address). Size the
+ *       outputs with @ref hexpr_pair_max_terms or @ref hexpr_pair_count_full.
+ */
+hexpr_status_t hexpr_pair_eval_full(const hexpr_drt_t *drt, int bra, int ket,
+                                     hexpr_expr_which_t which, int *out_count,
+                                     int32_t *out_ij, int32_t *out_pqrs,
+                                     double *out_coef)
+{
+    return pair_eval_impl(drt, bra, ket, which, out_count,
+                          out_ij, out_pqrs, out_coef, 1);
+}
+
+/**
  * @brief Shared engine for block count/eval: evaluate every (bra,ket) pair in a
  *        bra-set x ket-set Cartesian product, counting or emitting terms.
  * @param drt the DRT.
@@ -305,6 +408,7 @@ hexpr_status_t hexpr_pair_eval(const hexpr_drt_t *drt, int bra, int ket,
  *             the CSF indices); each optional.
  * @param[out] out_ij,out_pqrs,out_coef per-term columns; each optional.
  * @param emit 0 = count only (no writes); 1 = also write the output columns.
+ * @param full 0 = direction-selected sets, 1 = complete decompositions.
  * @return @c HEXPR_OK; @c HEXPR_ERR_INVALID_ARG on NULL/negative sizes/missing
  *         index arrays; @c HEXPR_ERR_OOM if the translation buffers cannot be
  *         allocated; @c HEXPR_ERR_RANGE if any index is out of range.
@@ -334,7 +438,7 @@ static hexpr_status_t block_eval_impl(
     hexpr_expr_which_t which, int *out_count,
     int32_t *out_bra_pos, int32_t *out_ket_pos,
     int32_t *out_ij, int32_t *out_pqrs, double *out_coef,
-    int emit)
+    int emit, int full)
 {
     if (!drt || !out_count) return HEXPR_ERR_INVALID_ARG;
     if (n_bra < 0 || n_ket < 0) return HEXPR_ERR_INVALID_ARG;
@@ -369,7 +473,7 @@ static hexpr_status_t block_eval_impl(
     int k = 0;
     for (int ip = 0; ip < n_bra; ip++) {
         for (int jp = 0; jp < n_ket; jp++) {
-            ot_vec_t v = pair_via_subdrt(drt, bra_walk[ip], ket_walk[jp]);
+            ot_vec_t v = pair_via_subdrt(drt, bra_walk[ip], ket_walk[jp], full);
             for (int i = 0; i < v.size; i++) {
                 const out_term_t *t = &v.data[i];
                 if (which == HEXPR_EXPR_ONE && t->pqrs >= n_oel) continue;
@@ -410,7 +514,7 @@ hexpr_status_t hexpr_block_count(
     hexpr_expr_which_t which, int *out_count)
 {
     return block_eval_impl(drt, bra_indices, n_bra, ket_indices, n_ket,
-                            which, out_count, NULL, NULL, NULL, NULL, NULL, 0);
+                            which, out_count, NULL, NULL, NULL, NULL, NULL, 0, 0);
 }
 
 /**
@@ -436,7 +540,45 @@ hexpr_status_t hexpr_block_eval(
 {
     return block_eval_impl(drt, bra_indices, n_bra, ket_indices, n_ket,
                             which, out_count,
-                            out_bra_pos, out_ket_pos, out_ij, out_pqrs, out_coef, 1);
+                            out_bra_pos, out_ket_pos, out_ij, out_pqrs, out_coef, 1, 0);
+}
+
+/**
+ * @brief Count the complete-decomposition terms over a bra-set x ket-set
+ *        block (v1.1).
+ * @note As @ref hexpr_block_count, but each ordered pair contributes the
+ *       @ref hexpr_pair_count_full count.
+ */
+hexpr_status_t hexpr_block_count_full(
+    const hexpr_drt_t *drt,
+    const int *bra_indices, int n_bra,
+    const int *ket_indices, int n_ket,
+    hexpr_expr_which_t which, int *out_count)
+{
+    return block_eval_impl(drt, bra_indices, n_bra, ket_indices, n_ket,
+                            which, out_count, NULL, NULL, NULL, NULL, NULL, 0, 1);
+}
+
+/**
+ * @brief Evaluate the complete decomposition of every pair of a bra-set x
+ *        ket-set block (v1.1).
+ * @note As @ref hexpr_block_eval, but each ordered pair (bra_indices[i],
+ *       ket_indices[j]) contributes exactly the terms of
+ *       @ref hexpr_pair_eval_full, so a block whose bra and ket sets are
+ *       disjoint is complete for every pair. Size the outputs with
+ *       @ref hexpr_block_max_terms or @ref hexpr_block_count_full.
+ */
+hexpr_status_t hexpr_block_eval_full(
+    const hexpr_drt_t *drt,
+    const int *bra_indices, int n_bra,
+    const int *ket_indices, int n_ket,
+    hexpr_expr_which_t which, int *out_count,
+    int32_t *out_bra_pos, int32_t *out_ket_pos,
+    int32_t *out_ij, int32_t *out_pqrs, double *out_coef)
+{
+    return block_eval_impl(drt, bra_indices, n_bra, ket_indices, n_ket,
+                            which, out_count,
+                            out_bra_pos, out_ket_pos, out_ij, out_pqrs, out_coef, 1, 1);
 }
 
 /**

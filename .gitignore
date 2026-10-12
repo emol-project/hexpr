@@ -31,6 +31,8 @@ c/tests/test_lk_table
 c/tests/test_lk_twophase
 c/tests/test_ncsfs_consistency
 c/tests/test_csf2det
+c/tests/test_pair_full_union
+c/tests/test_pair_threads
 c/reference_c/
 c/reference_pair_c/
 

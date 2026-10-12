@@ -199,6 +199,12 @@ def _load() -> ctypes.CDLL:
     lib.hexpr_pair_eval.argtypes = [DrtHandle, c_int, c_int, c_int, POINTER(c_int),
                                      POINTER(c_int32), POINTER(c_int32), POINTER(c_double)]
 
+    # complete decomposition (v1.1): same signatures as the v1.0 calls
+    lib.hexpr_pair_count_full.restype  = c_int
+    lib.hexpr_pair_count_full.argtypes = lib.hexpr_pair_count.argtypes
+    lib.hexpr_pair_eval_full.restype  = c_int
+    lib.hexpr_pair_eval_full.argtypes = lib.hexpr_pair_eval.argtypes
+
     lib.hexpr_pair_max_terms.restype  = c_int
     lib.hexpr_pair_max_terms.argtypes = [DrtHandle, c_int, POINTER(c_int)]
 
@@ -217,6 +223,11 @@ def _load() -> ctypes.CDLL:
                                       POINTER(c_int32), POINTER(c_int32),
                                       POINTER(c_int32), POINTER(c_int32),
                                       POINTER(c_double)]
+
+    lib.hexpr_block_count_full.restype  = c_int
+    lib.hexpr_block_count_full.argtypes = lib.hexpr_block_count.argtypes
+    lib.hexpr_block_eval_full.restype  = c_int
+    lib.hexpr_block_eval_full.argtypes = lib.hexpr_block_eval.argtypes
 
     lib.hexpr_block_max_terms.restype  = c_int
     lib.hexpr_block_max_terms.argtypes = [DrtHandle, c_int, c_int, c_int, POINTER(c_int)]

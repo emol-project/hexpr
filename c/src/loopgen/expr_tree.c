@@ -40,26 +40,30 @@
  * now shared in expr_internal.h. */
 
 /* The single sqrt(2)/sqrt(3) path for the whole expression generator.
- * hexpr_root_val[R1]=1.0 is exact; [R2]/[R3] are seeded here. Everything that
- * needs a root (matrix_el below; the table drivers' coef materialization) reads
- * this array, so there is exactly one place a root value can come from. */
-double hexpr_root_val[4] = { 0.0, 1.0, 0.0, 0.0 };
+ * hexpr_root_val[R1]=1.0 is exact; [R2]/[R3] are the correctly rounded doubles
+ * of sqrt(2) and sqrt(3) (what sqrt() returns), written as constants so that
+ * the array is never written at run time and concurrent evaluations only read
+ * it. Everything that needs a root (matrix_el below; the table drivers' coef
+ * materialization) reads this array, so there is exactly one place a root
+ * value can come from. */
+double hexpr_root_val[4] = { 0.0, 1.0, 1.4142135623730951, 1.7320508075688772 };
 void hexpr_roots_init(void)
 {
-    hexpr_root_val[R2] = sqrt(2.0);
-    hexpr_root_val[R3] = sqrt(3.0);
+    /* nothing to seed any more; kept for the callers */
 }
 
 /* ------------------------------------------------------------------ */
 /* two-phase L(k) table (shared by the whole and pair paths)          */
 /* ------------------------------------------------------------------ */
-/* ONE process-lifetime table. The whole path fills it (generate/warm) then
- * reads it (search); the pair path leaves it in OFF and fills-on-miss. Because
- * L(k)'s key (gf,ff,hf,psi,phi,theta,theta_prev) is DRT-independent, the same
- * warmed value serves every DRT / sub-DRT, so one shared table is correct.
+/* ONE table per thread, for the thread's lifetime. The whole path fills it
+ * (generate/warm) then reads it (search); the pair path leaves it in OFF and
+ * fills-on-miss. Because L(k)'s key (gf,ff,hf,psi,phi,theta,theta_prev) is
+ * DRT-independent, the same warmed value serves every DRT / sub-DRT, so one
+ * table per thread is correct; being thread-local, evaluations running in
+ * different threads never touch each other's table.
  * matrix_el and hmlkva read LK.phase to bump the SEARCH-phase call counters. */
-static lk_table_t LK;
-static int LK_inited = 0;
+static _Thread_local lk_table_t LK;
+static _Thread_local int LK_inited = 0;
 
 void hexpr_lk_ensure_init(void)   { if (!LK_inited) { lk_clear(&LK); LK_inited = 1; } }
 void hexpr_lk_begin_generation(void) { hexpr_lk_ensure_init(); LK.phase = LK_GENERATE; }
@@ -259,16 +263,16 @@ static double hmlkva(int gf, int ff, int hf,
  *                     hmlkva); we assert this stays 0 on the whole oracle set.
  * hmlkva (=> matrix_el + wigner_9j) is thus reached ONLY on a miss.
  */
-static double lk_value(int gf, int ff, int hf,
+static double lk_value(lk_table_t *T, int gf, int ff, int hf,
                        int psi, int phi, int theta, int theta_prev)
 {
     uint32_t key = lk_pack(gf, ff, hf, psi, phi, theta, theta_prev);
     double v;
-    if (lk_get(&LK, key, &v)) return v;                 /* HIT: pure lookup */
-    if      (LK.phase == LK_SEARCH) LK.miss++;          /* counted safety net */
-    else if (LK.phase == LK_OFF)    LK.off_fills++;     /* pair fill-on-miss */
+    if (lk_get(T, key, &v)) return v;                   /* HIT: pure lookup */
+    if      (T->phase == LK_SEARCH) T->miss++;          /* counted safety net */
+    else if (T->phase == LK_OFF)    T->off_fills++;     /* pair fill-on-miss */
     v = hmlkva(gf, ff, hf, psi, phi, theta, theta_prev);/* compute (fill / net) */
-    lk_put(&LK, key, v);
+    lk_put(T, key, v);
     return v;
 }
 
@@ -285,19 +289,23 @@ typedef struct {
     rnode_t *buckets[RHASH_CAP];
     rnode_t  pool[256];   /* typical loops per call: small */
     int      pool_used;
+    int      ntouched;    /* buckets made non-empty since the last reset */
+    uint16_t touched[RHASH_CAP];
 } rhash_t;
 
 /**
  * @brief Reset a record hash to empty (clear buckets, reset the node pool).
  * @param r record hash to initialize (caller-owned, e.g. a stack variable).
  * @note Does not free anything; pair a populated table with @ref rhash_reset to
- *       release any overflow heap nodes. Called once per start node in
- *       @ref calc_TensorOp_average.
+ *       release any overflow heap nodes. Called once per
+ *       @ref calc_TensorOp_average; @ref rhash_reset empties it again after each
+ *       start node, touching only the buckets it used.
  */
 static void rhash_init(rhash_t *r)
 {
     memset(r->buckets, 0, sizeof(r->buckets));
     r->pool_used = 0;
+    r->ntouched = 0;
 }
 
 /**
@@ -345,6 +353,8 @@ static int rhash_has_or_add(rhash_t *r, int bottom, int top,
     for (rnode_t *n = r->buckets[slot]; n; n = n->next)
         if (n->h == h) return 1;  /* found */
     /* insert */
+    if (r->buckets[slot] == NULL)
+        r->touched[r->ntouched++] = (uint16_t)slot;
     rnode_t *n;
     if (r->pool_used < 256)
         n = &r->pool[r->pool_used++];
@@ -369,7 +379,8 @@ static int rhash_has_or_add(rhash_t *r, int bottom, int top,
  */
 static void rhash_reset(rhash_t *r, int pool_limit)
 {
-    for (int i = 0; i < RHASH_CAP; i++) {
+    for (int t = 0; t < r->ntouched; t++) {      /* only the buckets in use */
+        int i = r->touched[t];
         rnode_t *n = r->buckets[i];
         while (n) {
             rnode_t *next = n->next;
@@ -379,6 +390,7 @@ static void rhash_reset(rhash_t *r, int pool_limit)
         }
         r->buckets[i] = NULL;
     }
+    r->ntouched = 0;
     r->pool_used = 0;
 }
 
@@ -467,6 +479,58 @@ static int le_cmp_top(const void *a, const void *b)
  * over the loop (Eq.19, Eq.20). Outside a loop the bra and ket walks are
  * identical and contribute the trivial factor. See Sec. 2.4-2.5, Eq.16.
  */
+/* ------------------------------------------------------------------ */
+/* optional walk constraint (single-pair evaluation)                   */
+/* ------------------------------------------------------------------ */
+/* When set, the loop-element search follows only the two given walks: the g
+ * walk must take step want_g[k] and the f walk step want_f[k] at orbital k,
+ * and a loop may start only at a node both walks pass through. The pair path
+ * (pair_eval_internal) keeps only loop elements whose g walk is the bra and
+ * whose f walk is the ket (its D3 filters), so the restricted search skips
+ * most of the elements it would discard. Used only by the v1.1 *_full calls
+ * (csf_pair.c), which evaluate both directions this way and merge them. A
+ * single restricted direction is not byte-identical to the unrestricted one
+ * (rhash folds a few loop orientations differently), but the union of the two
+ * directions is: c/tests/test_pair_full_union.c checks that on every pair of
+ * SOCI, FOCI, full-CAS and CSFSET spaces. The v1.0 calls never set it.
+ * Thread-local, like the L(k) table: each thread restricts its own search. */
+static _Thread_local const unsigned char *W_g = NULL, *W_f = NULL;
+static _Thread_local int *W_ng = NULL, *W_nf = NULL;   /* node of each walk at level k */
+
+void hexpr_loopgen_set_walks(const hexpr_drt_t *drt,
+                             const unsigned char *want_g,
+                             const unsigned char *want_f)
+{
+    free(W_ng); free(W_nf);
+    W_ng = W_nf = NULL;
+    W_g = W_f = NULL;
+    if (drt == NULL || want_g == NULL || want_f == NULL) return;
+    int norb = hexpr_drt_norb(drt), nnodes = hexpr_drt_nnodes(drt);
+    int bottom = -1;
+    for (int i = 0; i < nnodes && bottom < 0; i++)
+        if (hexpr_drt_orb(drt, i) == 0) bottom = i;
+    W_ng = malloc((size_t)(norb + 1) * sizeof(int));
+    W_nf = malloc((size_t)(norb + 1) * sizeof(int));
+    if (bottom < 0 || W_ng == NULL || W_nf == NULL) {
+        free(W_ng); free(W_nf); W_ng = W_nf = NULL;
+        return;                              /* fall back to the full search */
+    }
+    W_ng[0] = W_nf[0] = bottom;
+    for (int k = 0; k < norb; k++) {
+        W_ng[k + 1] = W_ng[k] < 0 ? -1 : hexpr_drt_upper_arc(drt, W_ng[k], want_g[k]);
+        W_nf[k + 1] = W_nf[k] < 0 ? -1 : hexpr_drt_upper_arc(drt, W_nf[k], want_f[k]);
+    }
+    W_g = want_g;
+    W_f = want_f;
+}
+
+/* The thread-local state a search reads, fetched once per
+ * calc_TensorOp_average and passed down (thread-local access is not free). */
+typedef struct {
+    lk_table_t *lk;                          /* this thread's L(k) table   */
+    const unsigned char *wg, *wf;            /* walk restriction, or NULL  */
+} search_ctx_t;
+
 static void tree_search(const hexpr_drt_t *drt, int bottom,
                         int gf, int ff,       /* current walk pair */
                         int k,                /* current orb level */
@@ -480,8 +544,11 @@ static void tree_search(const hexpr_drt_t *drt, int bottom,
                         int *ijkl, int *nijkl, /* orbital index stack */
                         int origin,
                         le_vec_t *expr, rhash_t *record,
-                        int norb)
+                        int norb, const search_ctx_t *sc)
 {
+    /* Walk constraint: only the given bra (g) / ket (f) steps at this orbital. */
+    if (sc->wg != NULL && (gf - 1 != sc->wg[k] || ff - 1 != sc->wf[k]))
+        return;
     /* Follow the g and f upper arcs for this step pair; a missing arc or weight
      * (negative) means this branch is dead -- stop before mutating any state. */
     int next_ng = hexpr_drt_upper_arc(drt, ng[k], gf - 1);
@@ -511,7 +578,7 @@ static void tree_search(const hexpr_drt_t *drt, int bottom,
      * table miss (fill in generate/off; counted safety net in search). */
     int psi = hexpr_drt_spin(drt, ng[k1]);
     int phi = hexpr_drt_spin(drt, nf[k1]);
-    mk[k1] = mk[k] * lk_value(gf, ff, hf, psi, phi, theta, theta_prev);
+    mk[k1] = mk[k] * lk_value(sc->lk, gf, ff, hf, psi, phi, theta, theta_prev);
 
     /* Below threshold the subtree cannot contribute -- prune it (still pops). */
     if (fabs(mk[k1]) >= THRESH_ZERO) {
@@ -544,7 +611,7 @@ static void tree_search(const hexpr_drt_t *drt, int bottom,
                                 ws->w[w][0], ws->w[w][1],
                                 k1, ng, nf, wg, wf,
                                 iop, tp, OP_UNITY, theta, theta, mk,
-                                ijkl, nijkl, origin, expr, record, norb);
+                                ijkl, nijkl, origin, expr, record, norb, sc);
             }
             /* advance to next operator */
             /* Place the next operator: its code/theta drive a new segment-walk
@@ -559,7 +626,7 @@ static void tree_search(const hexpr_drt_t *drt, int bottom,
                                 ws->w[w][0], ws->w[w][1],
                                 k1, ng, nf, wg, wf,
                                 next_iop, tp, next_hf, next_theta, theta,
-                                mk, ijkl, nijkl, origin, expr, record, norb);
+                                mk, ijkl, nijkl, origin, expr, record, norb, sc);
             }
         }
     }
@@ -616,12 +683,18 @@ le_vec_t calc_TensorOp_average(const hexpr_drt_t *drt,
     int norb   = hexpr_drt_norb(drt);
     int lenop  = tp->lenop;
 
-    /* per-level state arrays, indexed 0..norb */
-    int *ng = malloc((norb+1) * sizeof(int));
-    int *nf = malloc((norb+1) * sizeof(int));
-    int *wg = malloc((norb+1) * sizeof(int));
-    int *wf = malloc((norb+1) * sizeof(int));
-    double *mk = malloc((norb+1) * sizeof(double));
+    /* per-level state arrays, indexed 0..norb; on the stack for the usual
+     * sizes (the pair path calls this about a hundred times per pair, most
+     * of them on 1- or 2-CSF sub-DRTs, where five mallocs per call showed) */
+    enum { LOCAL_NORB = 128 };
+    int s_ng[LOCAL_NORB + 1], s_nf[LOCAL_NORB + 1], s_wg[LOCAL_NORB + 1], s_wf[LOCAL_NORB + 1];
+    double s_mk[LOCAL_NORB + 1];
+    int on_heap = norb > LOCAL_NORB;
+    int *ng = on_heap ? malloc((norb+1) * sizeof(int)) : s_ng;
+    int *nf = on_heap ? malloc((norb+1) * sizeof(int)) : s_nf;
+    int *wg = on_heap ? malloc((norb+1) * sizeof(int)) : s_wg;
+    int *wf = on_heap ? malloc((norb+1) * sizeof(int)) : s_wf;
+    double *mk = on_heap ? malloc((norb+1) * sizeof(double)) : s_mk;
 
     int  ijkl[4];
     int  nijkl;
@@ -631,15 +704,20 @@ le_vec_t calc_TensorOp_average(const hexpr_drt_t *drt,
 
     int iop = 0;
     int hf0 = tp->op[iop];
+    rhash_init(&record);          /* once; each start node leaves it empty again */
+    search_ctx_t sc = {&LK, W_g, W_f};
+    const int *w_ng = W_ng, *w_nf = W_nf;
 
     for (int inode = 0; inode < nnodes; inode++) {
         /* Stop once too few orbitals remain above this node to place all
          * lenop operators -- no loop could complete from here. */
         int orb_i = hexpr_drt_orb(drt, inode);
         if (norb - orb_i <= lenop - 1) break; /* no more room */
+        /* Walk constraint: a loop can start only where both walks pass. */
+        if (sc.wg != NULL && (w_ng[orb_i] != inode || w_nf[orb_i] != inode))
+            continue;
 
         le_vec_t expr = {NULL, 0, 0};
-        rhash_init(&record);
 
         /* Seed both walks at this start node: same node, zero path weights,
          * unit product, empty orbital-index stack. */
@@ -658,7 +736,7 @@ le_vec_t calc_TensorOp_average(const hexpr_drt_t *drt,
                         ws->w[w][0], ws->w[w][1],
                         k, ng, nf, wg, wf,
                         iop, tp, hf0, theta, theta_prev,
-                        mk, ijkl, &nijkl, origin, &expr, &record, norb);
+                        mk, ijkl, &nijkl, origin, &expr, &record, norb, &sc);
 
         /* sort by .top (ascending) -- stable sort, matches Ruby x.top-y.top */
         hexpr_stable_sort(expr.data, expr.size, sizeof(loop_element_t), le_cmp_top);
@@ -672,6 +750,6 @@ le_vec_t calc_TensorOp_average(const hexpr_drt_t *drt,
         rhash_reset(&record, record.pool_used);
     }
 
-    free(ng); free(nf); free(wg); free(wf); free(mk);
+    if (on_heap) { free(ng); free(nf); free(wg); free(wf); free(mk); }
     return all_expr;
 }
