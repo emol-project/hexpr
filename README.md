@@ -8,7 +8,8 @@ its orbital classification and the library will generate the corresponding
 CSFs internally. Since 1.2.0 it also evaluates the reduced matrix elements of
 spin-dependent one-electron operators, `<S'||(a+_p a~_q)^1||S>`, between two
 CSFs that may differ in total spin (`hexpr_rank1_pair`; the basis of
-spin-orbit and hyperfine calculations; see [CHANGELOG.md](CHANGELOG.md)).
+spin-orbit and hyperfine calculations; see
+[docs/RANK1_OPERATORS.md](docs/RANK1_OPERATORS.md)).
 
 Internally, hexpr uses the Distinct Row Table (DRT) representation and
 Brooks-style loop traversal. The matrix element formulation follows
@@ -70,7 +71,9 @@ hexpr/
 - **docs/** -- Specifications and design notes, including the index
   encoding ([docs/PQRS_INDEX_SPEC.md](docs/PQRS_INDEX_SPEC.md)), the
   per-pair API contract
-  ([docs/PAIR_API_SEMANTICS.md](docs/PAIR_API_SEMANTICS.md)), and how to
+  ([docs/PAIR_API_SEMANTICS.md](docs/PAIR_API_SEMANTICS.md)), the
+  conventions and evaluation of the rank-1 spin operators
+  ([docs/RANK1_OPERATORS.md](docs/RANK1_OPERATORS.md)), and how to
   compare hexpr with other CSF codes
   ([docs/COMPARING_WITH_OTHER_CSF_CODES.md](docs/COMPARING_WITH_OTHER_CSF_CODES.md)).
 

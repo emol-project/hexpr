@@ -19,6 +19,9 @@ follows [Keep a Changelog](https://keepachangelog.com/); versions follow
   `hexpr_rank1_pair` / `hexpr_rank1_max_terms`, Julia `HExpr.rank1_pair`,
   Ruby `HExpr.rank1_pair`, each with a test of the worked examples, the
   total-spin identity and the adjoint relation.
+- `docs/RANK1_OPERATORS.md`: the operators, the reduced-matrix-element
+  convention, the spin-orbit recipe, the evaluation with the spin-free
+  per-orbital factors, selection rules, worked examples and the checks.
 - `c/tests/test_rank1.c`: total-spin identity, adjoint relation over every
   CSF pair up to 5 orbitals, worked examples, selection rules. During
   development the formulation was checked against determinants for ranks
