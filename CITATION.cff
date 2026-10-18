@@ -25,7 +25,9 @@ identifiers:
   - type: doi
     value: "10.5281/zenodo.23308333"
     description: "Version 1.1.0"
-  # TODO after the release: the version 1.2.0 DOI from Zenodo (here and in README)
+  - type: doi
+    value: "10.5281/zenodo.23445568"
+    description: "Version 1.2.0"
 preferred-citation:
   type: article
   title: "hexpr: A Configuration State Function Based Hamiltonian Matrix Element Expression Library"
