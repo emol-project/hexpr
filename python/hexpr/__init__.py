@@ -40,6 +40,7 @@ __all__ = [
     "Drt", "Expression",
     "step_parse",
     "csf_pair_eval", "csf_pair_eval_full", "csf_block_eval", "csf_subspace_eval",
+    "rank1_pair",
 ]
 
 # Re-export IOError under the spec-required name in this module's namespace.
@@ -83,7 +84,7 @@ def shutdown() -> None:
 
 
 def version() -> str:
-    """Return the library version string, e.g. '1.1.0'."""
+    """Return the library version string, e.g. '1.2.0'."""
     raw = lib.hexpr_version_string()
     return raw.decode("utf-8") if raw else ""
 
@@ -816,6 +817,42 @@ def csf_pair_eval(bra_steps, ket_steps,
     drt = Drt.from_csfset(stacked, norb)
     # Row 0 is the bra, row 1 is the ket, whatever the canonical order is.
     return drt.pair_eval(0, 1, which)
+
+
+def rank1_pair(bra_steps, ket_steps) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Reduced matrix elements R_pq = <S'||(a+_p a~_q)^1||S> of the one-electron
+    triplet operators between a bra and a ket CSF given as step codes.
+
+    The two CSFs may have different total spin; no DRT is built. Convention
+    (Edmonds): ``<S'M'|T^1_m(pq)|SM> = (-1)^(S'-M') (S' 1 S; -M' m M) R_pq``,
+    and the one-electron spin density is ``s_m(pq) = -T^1_m(pq)/sqrt(2)``.
+    See ``hexpr_rank1_pair`` in hexpr.h.
+
+    Returns
+    -------
+    (p, q, R) as numpy arrays (int32, int32, float64), 0-based orbitals.
+    """
+    bra = np.ascontiguousarray(bra_steps, dtype=np.uint8)
+    ket = np.ascontiguousarray(ket_steps, dtype=np.uint8)
+    if bra.ndim != 1 or ket.ndim != 1 or len(bra) != len(ket):
+        raise ValueError("bra_steps and ket_steps must be 1-D of equal length")
+    norb = len(bra)
+    nmax = max(int(lib.hexpr_rank1_max_terms(norb)), 1)
+    p = np.zeros(nmax, dtype=np.int32)
+    q = np.zeros(nmax, dtype=np.int32)
+    r = np.zeros(nmax, dtype=np.float64)
+    n = ctypes.c_int()
+    check_status(lib.hexpr_rank1_pair(
+        int(norb),
+        bra.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)),
+        ket.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)),
+        ctypes.byref(n),
+        p.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)),
+        q.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)),
+        r.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
+    ), lib)
+    k = n.value
+    return p[:k].copy(), q[:k].copy(), r[:k].copy()
 
 
 def csf_pair_eval_full(bra_steps, ket_steps,

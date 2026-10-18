@@ -64,23 +64,25 @@ static void msort(char *base, size_t l, size_t r, size_t sz,
  * @param nmemb  number of elements.
  * @param size   element size in bytes.
  * @param compar qsort-style comparator (negative/zero/positive).
+ * @return 0, or -1 if the O(nmemb*size) scratch buffer cannot be allocated,
+ *         in which case @p base is left untouched.
  * @note Stable (equal elements keep their input order) -- unlike @c qsort(3),
- *       whose order on ties is unspecified. Uses O(nmemb*size) scratch via a
- *       bottom-up merge sort; if that allocation fails it falls back to
- *       @c qsort, which sorts correctly but is NOT stable. O(n log n) time.
+ *       whose order on ties is unspecified. Bottom-up merge sort, O(n log n).
+ *       Before 1.2 an allocation failure fell back to @c qsort, which is not
+ *       stable and so could change the output order; callers now report
+ *       HEXPR_ERR_OOM instead.
  */
-void hexpr_stable_sort(void *base, size_t nmemb, size_t size,
-                       int (*compar)(const void *, const void *))
+int hexpr_stable_sort(void *base, size_t nmemb, size_t size,
+                      int (*compar)(const void *, const void *))
 {
     /* Guard is `< 2`, not `== 0`: it both short-circuits the trivially-sorted
      * 0/1-element cases AND prevents the `nmemb - 1` below from wrapping around
      * (size_t is unsigned) when nmemb == 0. */
-    if (nmemb < 2) return;
+    if (nmemb < 2) return 0;
+    if (size != 0 && nmemb > (size_t)-1 / size) return -1;
     char *tmp = malloc(nmemb * size);
-    if (!tmp) {
-        qsort(base, nmemb, size, compar); /* unstable fallback */
-        return;
-    }
+    if (!tmp) return -1;
     msort((char *)base, 0, nmemb - 1, size, compar, tmp);
     free(tmp);
+    return 0;
 }

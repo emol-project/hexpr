@@ -4,6 +4,57 @@ All notable user-facing changes to hexpr are recorded here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 `HEXPR_VERSION_MAJOR.MINOR.PATCH` in `c/include/hexpr.h`.
 
+## [1.2.0] -- 2026-10-18
+
+### Added
+
+- Spin-dependent one-electron operators: `hexpr_rank1_pair` and
+  `hexpr_rank1_max_terms` return the reduced matrix elements
+  `<S'||(a+_p a~_q)^1||S>` (Edmonds convention) between two CSFs given as
+  step vectors, which may differ in total spin; no DRT is built. The
+  per-orbital factors are those of the spin-free path; the operator rank is
+  carried to the top orbital and the result is multiplied by
+  `(-1)^(1+S'-S) sqrt(2S+1)`. F77 wrappers `hexpr_rank1_pair_` and
+  `hexpr_rank1_max_terms_`, Python `hexpr.rank1_pair`, Fortran module
+  `hexpr_rank1_pair` / `hexpr_rank1_max_terms`, Julia `HExpr.rank1_pair`,
+  Ruby `HExpr.rank1_pair`, each with a test of the worked examples, the
+  total-spin identity and the adjoint relation.
+- `c/tests/test_rank1.c`: total-spin identity, adjoint relation over every
+  CSF pair up to 5 orbitals, worked examples, selection rules. During
+  development the formulation was checked against determinants for ranks
+  0, 1, 2, and the C evaluator against determinants (max 4.4e-15).
+- `example_ci/ch2_so`, `example_ci/oh_so`: spin-orbit matrices from PySCF
+  integrals, checked against determinants and against GAMESS HSO1, HSO2P
+  and HSO2 (the GAMESS inputs are included; its outputs are not).
+- `validation/safety/`: compiler and sanitizer matrix (gcc/clang at
+  -O0/-O2/-O3, ASan+UBSan, integer sanitizers, MSan, TSan), valgrind,
+  static analysis (cppcheck, gcc `-fanalyzer`) and fuzzing of
+  `hexpr_rank1_pair`, with the results for this release.
+- `c/tests/test_oom.c` (Linux): fails each allocation of a call in turn and
+  checks that the call reports out of memory or returns its normal result,
+  with no state left behind; under ASan/LSan also no leak or invalid access.
+
+### Fixed
+
+- Out of memory is now reported instead of crashing or returning a wrong
+  result. Before, a failed `malloc`, `calloc` or `realloc` inside DRT
+  construction, expression generation or pair evaluation was dereferenced
+  (a crash), and in the pair/block/subspace calls some failures returned
+  `HEXPR_OK` with no terms; the stable sort fell back to an unstable `qsort`,
+  which could reorder the output. Now the calls that return a status
+  (`hexpr_pair_*`, `hexpr_block_*`, `hexpr_subspace_*`, `hexpr_csf_to_dets`)
+  return `HEXPR_ERR_OOM`, and the builders (`hexpr_drt_create`,
+  `hexpr_drt_from_csfset`, `hexpr_expr_build`) return NULL with "out of
+  memory" in `hexpr_last_error()`; everything allocated so far is freed.
+  A pair whose walk cannot be decoded (ruled out by the index validation)
+  is reported as `HEXPR_ERR_INTERNAL` instead of as no terms.
+
+### Unchanged
+
+- Every 1.0.0 and 1.1.0 call and its output when memory suffices (the
+  frozen references in `reference/`, `reference_pair/`, `reference_csfset/`
+  pass unchanged).
+
 ## [1.1.0] -- 2026-10-12
 
 ### Added

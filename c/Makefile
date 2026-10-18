@@ -40,7 +40,8 @@ COMMON_OBJS = $(COMMON_SRCS:.c=.o)
 LOOPGEN_SRCS = src/loopgen/drt.c src/loopgen/expr_tree.c src/loopgen/expr.c
 LOOPGEN_OBJS = $(LOOPGEN_SRCS:.c=.o)
 
-CSF_SRCS = src/csf/csf_lookup.c src/csf/csf_pair_core.c src/csf/csf_pair.c src/csf/csf2det.c
+CSF_SRCS = src/csf/csf_lookup.c src/csf/csf_pair_core.c src/csf/csf_pair.c src/csf/csf2det.c \
+           src/csf/csf_rank1.c
 CSF_OBJS = $(CSF_SRCS:.c=.o)
 
 # Core API sources.

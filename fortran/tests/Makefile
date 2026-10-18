@@ -38,7 +38,7 @@ else
 endif
 LIBS      := -L../../c -lhexpr $(RPATH) -lm
 
-F90_TESTS := test_smoke test_drt test_expr test_csfset test_pair test_completeness
+F90_TESTS := test_smoke test_drt test_expr test_csfset test_pair test_completeness test_rank1
 F77_TESTS := test_f77_smoke test_f77_completeness test_f77_eval
 TESTS     := $(F90_TESTS) $(F77_TESTS)
 
@@ -89,6 +89,9 @@ test_pair: test_pair.f90 hexpr_mod.stamp
 	$(FC) $(FCFLAGS) -I. $< hexpr_mod.o $(LIBS) -o $@
 
 test_completeness: test_completeness.f90 hexpr_mod.stamp
+	$(FC) $(FCFLAGS) -I. $< hexpr_mod.o $(LIBS) -o $@
+
+test_rank1: test_rank1.f90 hexpr_mod.stamp
 	$(FC) $(FCFLAGS) -I. $< hexpr_mod.o $(LIBS) -o $@
 
 # ---- F77 tests (fixed form, use underscore aliases in libhexpr) --

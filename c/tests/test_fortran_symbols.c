@@ -116,6 +116,10 @@ int main(void)
     check_sym(h, "hexpr_csf_ndets_");
     check_sym(h, "hexpr_csf_to_dets_");
 
+    /* spin-dependent one-electron operators (rank 1) */
+    check_sym(h, "hexpr_rank1_max_terms_");
+    check_sym(h, "hexpr_rank1_pair_");
+
     dlclose(h);
 
     printf("%s (%d failure(s))\n", failures ? "FAIL" : "PASS", failures);

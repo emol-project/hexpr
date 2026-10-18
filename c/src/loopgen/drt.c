@@ -74,7 +74,23 @@ typedef struct {
     node_t **order;
     int order_cap;
     int order_size;
+    /* Sticky out-of-memory flag (since 1.2): set when a node or an insert
+     * could not be allocated. The node is then not stored (and is freed); the
+     * builder checks the flag after each phase and returns NULL. */
+    int oom;
 } htab_t;
+
+/* malloc / calloc of n elements that never asks for 0 bytes (so NULL always
+ * means out of memory) and refuses a size that overflows size_t. */
+static void *alloc_n(size_t n, size_t sz)
+{
+    if (sz && n > (size_t)-1 / sz) return NULL;
+    return malloc(n ? n * sz : 1);
+}
+static void *calloc_n(size_t n, size_t sz)
+{
+    return calloc(n ? n : 1, sz ? sz : 1);
+}
 
 /**
  * @brief Mix a node code @c (orb,nve,is) into an unsigned bucket hash.
@@ -90,16 +106,22 @@ static unsigned int htab_hash(int orb, int nve, int is)
 /**
  * @brief Allocate an empty construction hash table (code -> node, with an
  *        insertion-order list for stable iteration).
- * @return a new table; release with @ref htab_free.
+ * @return a new table, or NULL if it cannot be allocated; release with
+ *         @ref htab_free.
  * @note Internal to construction only (not the public ::hexpr_drt_t).
  */
 static htab_t *htab_new_n(int nbuckets)
 {
     htab_t *h = calloc(1, sizeof(htab_t));
+    if (!h) return NULL;
     h->nbuckets = nbuckets;
-    h->buckets = calloc(h->nbuckets, sizeof(htab_entry_t *));
+    h->buckets = calloc_n((size_t)h->nbuckets, sizeof(htab_entry_t *));
     h->order_cap = 256;
-    h->order = malloc(h->order_cap * sizeof(node_t *));
+    h->order = alloc_n((size_t)h->order_cap, sizeof(node_t *));
+    if (!h->buckets || !h->order) {
+        free(h->buckets); free(h->order); free(h);
+        return NULL;
+    }
     return h;
 }
 
@@ -126,6 +148,7 @@ static int htab_size_for(long nodes)
  */
 static void htab_free(htab_t *h)
 {
+    if (!h) return;
     for (int i = 0; i < h->nbuckets; i++) {
         htab_entry_t *e = h->buckets[i];
         while (e) {
@@ -166,18 +189,27 @@ static node_t *htab_lookup(htab_t *h, int orb, int nve, int is)
  * @param node node to store; the table TAKES OWNERSHIP (freed by @ref htab_free).
  * @note Does not check for an existing code -- the caller must dedupe (see
  *       @ref h_store). Grows the order[] array by doubling when full.
+ * @note A NULL @p node (a failed @ref node_new), or a failure to grow the
+ *       table, sets @c h->oom; the node is then freed, not stored, so the
+ *       caller must not use it after this call.
  */
 static void htab_insert(htab_t *h, node_t *node)
 {
+    if (!node || h->oom) { free(node); h->oom = 1; return; }
     if (h->order_size == h->order_cap) {
+        node_t **p = (h->order_cap <= (1 << 29))
+                   ? realloc(h->order, (size_t)h->order_cap * 2 * sizeof(node_t *))
+                   : NULL;
+        if (!p) { free(node); h->oom = 1; return; }
+        h->order = p;
         h->order_cap *= 2;
-        h->order = realloc(h->order, h->order_cap * sizeof(node_t *));
     }
-    h->order[h->order_size++] = node;
-    h->size++;
-
     unsigned int idx = htab_hash(node->orb, node->nve, node->is) % (unsigned int)h->nbuckets;
     htab_entry_t *e = malloc(sizeof(htab_entry_t));
+    if (!e) { free(node); h->oom = 1; return; }
+
+    h->order[h->order_size++] = node;
+    h->size++;
     e->orb = node->orb;
     e->nve = node->nve;
     e->is  = node->is;
@@ -238,7 +270,9 @@ typedef struct { int nve, is; } info_t;
  * @param orb,nve,is the node code.
  * @param mo   MO classification (supplies @c norb and the valence boundary).
  * @param info target state (supplies the total @c nve and spin).
- * @return a freshly @c calloc'd node (caller/owner is whoever inserts it).
+ * @return a freshly @c calloc'd node (caller/owner is whoever inserts it), or
+ *         NULL if it cannot be allocated (@ref h_store / @ref htab_insert then
+ *         record the failure in the table's @c oom flag).
  *
  * Role: the single factory for construction-time nodes. Every generator and the
  * valence recursion routes allocation through here so the @c check_node
@@ -263,6 +297,7 @@ static node_t *node_new(int orb, int nve, int is,
                         const mo_t *mo, const info_t *info)
 {
     node_t *n = calloc(1, sizeof(node_t));
+    if (!n) return NULL;
     n->orb = orb;
     n->nve = nve;
     n->is  = is;
@@ -372,6 +407,7 @@ struct hexpr_drt {
  */
 static void h_store(htab_t *h, node_t *n)
 {
+    if (!n) { h->oom = 1; return; }          /* node_new failed */
     if (htab_lookup(h, n->orb, n->nve, n->is)) {
         free(n);
         return;
@@ -556,12 +592,17 @@ static int generate_valence_node(int orb, int nve, int is,
 {
     /* Memoization: h_nodes is also the visited set, so a previously generated
      * code short-circuits with its cached status (no re-expansion). */
+    /* Out of memory earlier: stop expanding (the builder reports it). */
+    if (h_nodes->oom) return 0;
     node_t *existing = htab_lookup(h_nodes, orb, nve, is);
     if (existing)
         return existing->status;
 
     node_t *nn = node_new(orb, nve, is, mo, info);
+    if (!nn) { h_nodes->oom = 1; return 0; }
 
+    /* htab_insert may free nn (out of memory), so every status is read
+     * before the insert. */
     if (!nn->status) {
         htab_insert(h_nodes, nn);
         return 0;
@@ -572,12 +613,10 @@ static int generate_valence_node(int orb, int nve, int is,
     /* Valence/external boundary: keep this node only if it joins into the
      * already-built downstream graph held in `dest`. */
     if (orb == orb_last) {
-        if (node_if_connect_area(nn, dest))
-            nn->status = 1;
-        else
-            nn->status = 0;
+        int st = node_if_connect_area(nn, dest) ? 1 : 0;
+        nn->status = st;
         htab_insert(h_nodes, nn);
-        return nn->status;
+        return st;
     }
 
     /* Interior valence orbital: recurse on the four steps; the node is valid
@@ -587,9 +626,10 @@ static int generate_valence_node(int orb, int nve, int is,
     int d = generate_valence_node(orb+1, nve+1, is-1, dest, h_nodes, mo, info);
     int f = generate_valence_node(orb+1, nve+2, is,   dest, h_nodes, mo, info);
 
-    nn->status = (e || u || d || f) ? 1 : 0;
+    int st = (e || u || d || f) ? 1 : 0;
+    nn->status = st;
     htab_insert(h_nodes, nn);
-    return nn->status;
+    return st;
 }
 
 /* ------------------------------------------------------------------ */
@@ -654,10 +694,11 @@ static int generate_valence_node(int orb, int nve, int is,
 static void prune_unreachable(htab_t *h, int norb, int nve, int is)
 {
     /* reachable from bottom */
-    int *rfb = calloc(h->order_size, sizeof(int));
+    int *rfb = calloc_n((size_t)h->order_size, sizeof(int));
     /* queue as dynamic array */
-    int *queue = malloc(h->order_size * sizeof(int));
+    int *queue = alloc_n((size_t)h->order_size, sizeof(int));
     int qhead = 0, qtail = 0;
+    if (!rfb || !queue) { free(rfb); free(queue); h->oom = 1; return; }
 
     /* find bottom index */
     node_t *bottom = htab_lookup(h, 0, 0, 0);
@@ -709,7 +750,8 @@ static void prune_unreachable(htab_t *h, int norb, int nve, int is)
     }
 
     /* reachable from top */
-    int *rft = calloc(n, sizeof(int));
+    int *rft = calloc_n((size_t)n, sizeof(int));
+    if (!rft) { free(rfb); free(queue); h->oom = 1; return; }
     node_t *top = htab_lookup(h, norb, nve, is);
     if (!top) { free(rfb); free(rft); free(queue); return; }
     int top_idx = -1;
@@ -897,14 +939,20 @@ typedef struct {
  * @param val value to append.
  * @note May @c realloc and move @c v->data. Backing store for the per-node
  *       path-weight lists assembled during construction.
+ * @return 0, or -1 if the vector cannot grow (@p val is then not stored).
  */
-static void ivec_push(ivec_t *v, int val)
+static int ivec_push(ivec_t *v, int val)
 {
     if (v->size == v->cap) {
-        v->cap = v->cap ? v->cap * 2 : 4;
-        v->data = realloc(v->data, v->cap * sizeof(int));
+        if (v->cap > (1 << 29)) return -1;
+        int nc = v->cap ? v->cap * 2 : 4;
+        int *p = realloc(v->data, (size_t)nc * sizeof(int));
+        if (!p) return -1;
+        v->data = p;
+        v->cap  = nc;
     }
     v->data[v->size++] = val;
+    return 0;
 }
 
 /**
@@ -931,19 +979,22 @@ static void ivec_push(ivec_t *v, int val)
  * refs [4,5]). Paired with an upper path weight it identifies one full CSF (cf.
  * expand_expr, csf_lookup.c). The paper references the DRT (Sec. 4.1) as is.
  */
-static void tree_search_lower(node_t *nodes, int inode, int top_index,
-                              ivec_t *lw, int weight)
+/* Returns 0, or -1 as soon as a push fails (out of memory). */
+static int tree_search_lower(node_t *nodes, int inode, int top_index,
+                             ivec_t *lw, int weight)
 {
-    if (inode == top_index) return;
+    if (inode == top_index) return 0;
     for (int step = 0; step < 4; step++) {
         int next = nodes[inode].upper_arc[step];
         int aw   = nodes[inode].arc_weight[step];
         if (next != ARC_NIL && aw != ARC_NIL) {
             int nw = weight + aw;
-            ivec_push(&lw[next], nw);
-            tree_search_lower(nodes, next, top_index, lw, nw);
+            if (ivec_push(&lw[next], nw) != 0 ||
+                tree_search_lower(nodes, next, top_index, lw, nw) != 0)
+                return -1;
         }
     }
+    return 0;
 }
 
 /**
@@ -967,19 +1018,20 @@ static void tree_search_lower(node_t *nodes, int inode, int top_index,
  * (lower offset + upper offset), which is the CSF index used downstream. The
  * paper builds the DRT following Shavitt (Sec. 4.1) without restating the scheme.
  */
-static void tree_search_upper(node_t *nodes, int inode, int top_index,
-                              int weight, ivec_t *out)
+/* Returns 0, or -1 as soon as a push fails (out of memory). */
+static int tree_search_upper(node_t *nodes, int inode, int top_index,
+                             int weight, ivec_t *out)
 {
-    if (inode == top_index) {
-        ivec_push(out, weight);
-        return;
-    }
+    if (inode == top_index)
+        return ivec_push(out, weight);
     for (int step = 0; step < 4; step++) {
         int next = nodes[inode].upper_arc[step];
         int aw   = nodes[inode].arc_weight[step];
-        if (next != ARC_NIL && aw != ARC_NIL)
-            tree_search_upper(nodes, next, top_index, weight + aw, out);
+        if (next != ARC_NIL && aw != ARC_NIL &&
+            tree_search_upper(nodes, next, top_index, weight + aw, out) != 0)
+            return -1;
     }
+    return 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -995,6 +1047,7 @@ typedef struct {
     char  *csf_buf;   /* reused buffer of length norb */
     int    norb;
     int    depth;
+    int    oom;       /* sticky: a push failed; the walk stops */
 } csf_ctx_t;
 
 /**
@@ -1008,12 +1061,18 @@ typedef struct {
  */
 static void csf_push(csf_ctx_t *ctx)
 {
+    if (ctx->oom) return;
     if (ctx->size == ctx->cap) {
-        ctx->cap = ctx->cap ? ctx->cap * 2 : 64;
-        ctx->list = realloc(ctx->list, ctx->cap * sizeof(char *));
+        char **p = (ctx->cap <= (1 << 29))
+                 ? realloc(ctx->list, (size_t)(ctx->cap ? ctx->cap * 2 : 64) * sizeof(char *))
+                 : NULL;
+        if (!p) { ctx->oom = 1; return; }
+        ctx->list = p;
+        ctx->cap  = ctx->cap ? ctx->cap * 2 : 64;
     }
-    char *s = malloc(ctx->norb + 1);
-    memcpy(s, ctx->csf_buf, ctx->norb);
+    char *s = malloc((size_t)ctx->norb + 1);
+    if (!s) { ctx->oom = 1; return; }
+    memcpy(s, ctx->csf_buf, (size_t)ctx->norb);
     s[ctx->norb] = '\0';
     ctx->list[ctx->size++] = s;
 }
@@ -1042,6 +1101,7 @@ static void csf_push(csf_ctx_t *ctx)
  */
 static void tree_search_csf(node_t *nodes, int inode, int top_index, csf_ctx_t *ctx)
 {
+    if (ctx->oom) return;
     if (inode == top_index) {
         csf_push(ctx);
         return;
@@ -1103,36 +1163,55 @@ hexpr_drt_t *hexpr_drt_create(hexpr_drt_kind_t kind,
     mo_t   mo   = mo_init(ncore, nval, next);
     info_t info = {nve, spin_x2};
 
-    htab_t *h_nodes = htab_new();
+    /* Everything that the out-of-memory exit (label oom, at the end) may have
+     * to release; each is NULL until allocated. Ownership moves into drt as
+     * it is assembled, and the moved pointer is cleared here. */
+    htab_t *h_nodes = NULL, *nodes_core_last = NULL, *nodes_ext_first = NULL;
+    htab_t *code2num_h = NULL;
+    node_t **tmp_ptrs = NULL;
+    node_t *nodes = NULL;
+    ivec_t *lower_pw = NULL, *upper_pw = NULL;
+    hexpr_drt_t *drt = NULL;
+    char **csfs = NULL;
+    int valid_count = 0, ncsf = 0;
+
+    h_nodes = htab_new();
+    if (!h_nodes) goto oom;
 
     /* 1. generate core nodes */
     if (kind == HEXPR_DRT_SOCI)
         soci_generate_core_node(h_nodes, &mo, &info);
     else
         foci_generate_core_node(h_nodes, &mo, &info);
+    if (h_nodes->oom) goto oom;
 
     /* collect nodes where orb == core_range.last (or bottom if ncore==0) */
-    htab_t *nodes_core_last = htab_new();
+    nodes_core_last = htab_new();
+    if (!nodes_core_last) goto oom;
     for (int i = 0; i < h_nodes->order_size; i++) {
         node_t *nd = h_nodes->order[i];
         if (nd->orb == mo.core_last)
             h_store(nodes_core_last, node_new(nd->orb, nd->nve, nd->is, &mo, &info));
     }
+    if (nodes_core_last->oom) goto oom;
 
     /* 2. generate external nodes */
     if (kind == HEXPR_DRT_SOCI)
         soci_generate_external_node(h_nodes, &mo, &info);
     else
         foci_generate_external_node(h_nodes, &mo, &info);
+    if (h_nodes->oom) goto oom;
 
     /* collect nodes where orb == ext_range.first (or top if next==0) */
-    htab_t *nodes_ext_first = htab_new();
+    nodes_ext_first = htab_new();
+    if (!nodes_ext_first) goto oom;
     for (int i = 0; i < h_nodes->order_size; i++) {
         node_t *nd = h_nodes->order[i];
         int want_orb = (mo.next > 0) ? mo.ext_first : mo.ext_last;
         if (nd->orb == want_orb)
             h_store(nodes_ext_first, node_new(nd->orb, nd->nve, nd->is, &mo, &info));
     }
+    if (nodes_ext_first->oom) goto oom;
 
     /* 3. generate valence nodes from each core_last node */
     for (int i = 0; i < nodes_core_last->order_size; i++) {
@@ -1142,6 +1221,7 @@ hexpr_drt_t *hexpr_drt_create(hexpr_drt_kind_t kind,
         generate_valence_node(nd->orb+1, nd->nve+1, nd->is-1, nodes_ext_first, h_nodes, &mo, &info);
         generate_valence_node(nd->orb+1, nd->nve+2, nd->is,   nodes_ext_first, h_nodes, &mo, &info);
     }
+    if (h_nodes->oom) goto oom;
 
     /* 4. remove invalid nodes */
     for (int i = 0; i < h_nodes->order_size; i++)
@@ -1150,23 +1230,25 @@ hexpr_drt_t *hexpr_drt_create(hexpr_drt_kind_t kind,
 
     /* 5. prune unreachable */
     prune_unreachable(h_nodes, mo.norb, nve, spin_x2);
+    if (h_nodes->oom) goto oom;
 
     /* 6. collect valid nodes and sort */
-    int valid_count = 0;
     for (int i = 0; i < h_nodes->order_size; i++)
         if (h_nodes->order[i]->status) valid_count++;
 
-    node_t **tmp_ptrs = malloc(valid_count * sizeof(node_t *));
+    tmp_ptrs = alloc_n((size_t)valid_count, sizeof(node_t *));
+    nodes    = alloc_n((size_t)valid_count, sizeof(node_t));
+    if (!tmp_ptrs || !nodes) goto oom;
     int vi = 0;
     for (int i = 0; i < h_nodes->order_size; i++)
         if (h_nodes->order[i]->status)
             tmp_ptrs[vi++] = h_nodes->order[i];
     qsort(tmp_ptrs, valid_count, sizeof(node_t *), node_cmp);
 
-    node_t *nodes = malloc(valid_count * sizeof(node_t));
     for (int i = 0; i < valid_count; i++)
         nodes[i] = *tmp_ptrs[i];
     free(tmp_ptrs);
+    tmp_ptrs = NULL;
 
     /* find top_index */
     int top_index = -1;
@@ -1191,10 +1273,12 @@ hexpr_drt_t *hexpr_drt_create(hexpr_drt_kind_t kind,
     /* 7. build code2num mapping and set upper/lower arcs */
     /* (reuse a simple flat array of sorted nodes to binary-search) */
     /* Actually, just rebuild a lookup htab on the sorted nodes */
-    htab_t *code2num_h = htab_new();
+    code2num_h = htab_new();
+    if (!code2num_h) goto oom;
     for (int i = 0; i < valid_count; i++) {
         /* store a node_t* whose address encodes the index; we abuse the pointer */
         node_t *proxy = calloc(1, sizeof(node_t));
+        if (!proxy) goto oom;
         proxy->orb = nodes[i].orb;
         proxy->nve = nodes[i].nve;
         proxy->is  = nodes[i].is;
@@ -1205,6 +1289,7 @@ hexpr_drt_t *hexpr_drt_create(hexpr_drt_kind_t kind,
         proxy->number_lower_arcs = ARC_NIL;
         htab_insert(code2num_h, proxy);
     }
+    if (code2num_h->oom) goto oom;
 
     /* Wire arcs reciprocally: for each node, look up its four step successors
      * (codes succ[w]) via code2num_h to get the target index jnode; record it as
@@ -1239,30 +1324,37 @@ hexpr_drt_t *hexpr_drt_create(hexpr_drt_kind_t kind,
     store_number_lower_arcs(nodes, valid_count - 1);
 
     /* 9. set_lower_path_weights */
-    ivec_t *lower_pw = calloc(valid_count, sizeof(ivec_t));
-    ivec_push(&lower_pw[0], 0);
-    tree_search_lower(nodes, 0, top_index, lower_pw, 0);
+    lower_pw = calloc_n((size_t)valid_count, sizeof(ivec_t));
+    upper_pw = calloc_n((size_t)valid_count, sizeof(ivec_t));
+    if (!lower_pw || !upper_pw) goto oom;
+    if (ivec_push(&lower_pw[0], 0) != 0 ||
+        tree_search_lower(nodes, 0, top_index, lower_pw, 0) != 0)
+        goto oom;
 
     /* 10. set_upper_path_weights */
-    ivec_t *upper_pw = calloc(valid_count, sizeof(ivec_t));
     for (int i = 0; i < valid_count; i++) {
-        if (nodes[i].number_upper_arcs != ARC_NIL)
-            tree_search_upper(nodes, i, top_index, 0, &upper_pw[i]);
+        if (nodes[i].number_upper_arcs != ARC_NIL &&
+            tree_search_upper(nodes, i, top_index, 0, &upper_pw[i]) != 0)
+            goto oom;
     }
 
     /* Assemble result */
-    hexpr_drt_t *drt = calloc(1, sizeof(hexpr_drt_t));
+    drt = calloc(1, sizeof(hexpr_drt_t));
+    if (!drt) goto oom;
     drt->info      = info;
     drt->mo        = mo;
     drt->kind      = kind;
     drt->nodes     = nodes;
     drt->nnodes    = valid_count;
     drt->top_index = top_index;
+    nodes = NULL;                                  /* owned by drt */
 
-    drt->lower_pw   = malloc(valid_count * sizeof(int *));
-    drt->lower_pw_n = malloc(valid_count * sizeof(int));
-    drt->upper_pw   = malloc(valid_count * sizeof(int *));
-    drt->upper_pw_n = malloc(valid_count * sizeof(int));
+    drt->lower_pw   = calloc_n((size_t)valid_count, sizeof(int *));
+    drt->lower_pw_n = calloc_n((size_t)valid_count, sizeof(int));
+    drt->upper_pw   = calloc_n((size_t)valid_count, sizeof(int *));
+    drt->upper_pw_n = calloc_n((size_t)valid_count, sizeof(int));
+    if (!drt->lower_pw || !drt->lower_pw_n || !drt->upper_pw || !drt->upper_pw_n)
+        goto oom;
     for (int i = 0; i < valid_count; i++) {
         drt->lower_pw[i]   = lower_pw[i].data;
         drt->lower_pw_n[i] = lower_pw[i].size;
@@ -1271,20 +1363,22 @@ hexpr_drt_t *hexpr_drt_create(hexpr_drt_kind_t kind,
     }
     free(lower_pw);
     free(upper_pw);
+    lower_pw = upper_pw = NULL;                    /* their data is owned by drt */
 
     /* htab_free frees all node_t* via the bucket chain */
     htab_free(code2num_h);
     htab_free(nodes_core_last);
     htab_free(nodes_ext_first);
     htab_free(h_nodes);
+    code2num_h = nodes_core_last = nodes_ext_first = h_nodes = NULL;
 
     /* build packed CSF buffer */
     {
         static const unsigned char CHAR_TO_STEP[256] = {
             ['e'] = 0, ['u'] = 1, ['d'] = 2, ['f'] = 3
         };
-        char **csfs = NULL;
-        int ncsf = hexpr_drt_mk_csf_list(drt, &csfs);
+        ncsf = hexpr_drt_mk_csf_list(drt, &csfs);
+        if (ncsf < 0) goto oom;
         int norb  = drt->mo.norb;
 
         /* Construction-time invariant: nodes[0] must be the walk origin
@@ -1342,17 +1436,39 @@ hexpr_drt_t *hexpr_drt_create(hexpr_drt_kind_t kind,
             return NULL;
         }
 
-        drt->csf_packed    = malloc((size_t)ncsf * (size_t)norb);
+        drt->csf_packed    = alloc_n((size_t)ncsf, (size_t)norb);
+        if (!drt->csf_packed) goto oom;
         drt->ncsfs_cached  = ncsf;
         for (int i = 0; i < ncsf; i++) {
             for (int j = 0; j < norb; j++)
-                drt->csf_packed[i * norb + j] = CHAR_TO_STEP[(unsigned char)csfs[i][j]];
+                drt->csf_packed[(size_t)i * (size_t)norb + j] =
+                    CHAR_TO_STEP[(unsigned char)csfs[i][j]];
             free(csfs[i]);
         }
         free(csfs);
     }
 
     return drt;
+
+oom:
+    /* Release whatever was built; every pointer is NULL or owned here. */
+    if (csfs) {
+        for (int i = 0; i < ncsf; i++) free(csfs[i]);
+        free(csfs);
+    }
+    if (lower_pw) for (int i = 0; i < valid_count; i++) free(lower_pw[i].data);
+    if (upper_pw) for (int i = 0; i < valid_count; i++) free(upper_pw[i].data);
+    free(lower_pw);
+    free(upper_pw);
+    free(tmp_ptrs);
+    free(nodes);
+    hexpr_drt_free(drt);
+    htab_free(code2num_h);
+    htab_free(nodes_core_last);
+    htab_free(nodes_ext_first);
+    htab_free(h_nodes);
+    hexpr_set_error("hexpr_drt_create: out of memory");
+    return NULL;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1397,9 +1513,20 @@ hexpr_drt_t *hexpr_drt_from_csfset(int norb,
                                     const unsigned char *csfs,
                                     int n_csfs)
 {
+    hexpr_status_t st;
+    return hexpr_drt_from_csfset_st(norb, csfs, n_csfs, &st);
+}
+
+/* The implementation; *out_st tells a rejected input (HEXPR_ERR_INVALID_ARG)
+ * from an allocation failure (HEXPR_ERR_OOM), which the pair path reports
+ * differently. */
+hexpr_drt_t *hexpr_drt_from_csfset_st(int norb, const unsigned char *csfs,
+                                      int n_csfs, hexpr_status_t *out_st)
+{
     static const int DELTA_NVE[4] = {0, 1, 1, 2};
     static const int DELTA_IS [4] = {0, 1,-1, 0};
 
+    *out_st = HEXPR_ERR_INVALID_ARG;
     if (!csfs) {
         hexpr_set_error("hexpr_drt_from_csfset: csfs is NULL");
         return NULL;
@@ -1413,17 +1540,29 @@ hexpr_drt_t *hexpr_drt_from_csfset(int norb,
         return NULL;
     }
 
-    htab_t *h_nodes = htab_new_n(htab_size_for((long)n_csfs * norb + 1));
+    /* Released by the out-of-memory exit (label oom, at the end). */
+    htab_t *h_nodes = NULL, *code2num_h = NULL;
+    node_t **tmp_ptrs = NULL;
+    node_t *nodes = NULL;
+    ivec_t *lower_pw = NULL, *upper_pw = NULL;
+    hexpr_drt_t *drt = NULL;
+    char **csf_list = NULL;
+    int ncount = 0, ncsf = 0;
+
+    h_nodes = htab_new_n(htab_size_for((long)n_csfs * norb + 1));
+    if (!h_nodes) goto oom;
 
     /* Insert bottom node (0,0,0) */
     {
         node_t *n = calloc(1, sizeof(node_t));
+        if (!n) goto oom;
         n->status = 1;
         n->number_upper_arcs = ARC_NIL;
         n->number_lower_arcs = ARC_NIL;
         for (int w = 0; w < 4; w++)
             n->upper_arc[w] = n->arc_weight[w] = n->lower_arc[w] = ARC_NIL;
         htab_insert(h_nodes, n);
+        if (h_nodes->oom) goto oom;
     }
 
     int top_nve = -1, top_is = -1, top_set = 0;
@@ -1469,6 +1608,7 @@ hexpr_drt_t *hexpr_drt_from_csfset(int norb,
 
             if (!htab_lookup(h_nodes, orb, nve, is)) {
                 node_t *n = calloc(1, sizeof(node_t));
+                if (!n) goto oom;
                 n->orb = orb; n->nve = nve; n->is = is;
                 n->status = 1;
                 n->number_upper_arcs = ARC_NIL;
@@ -1476,6 +1616,7 @@ hexpr_drt_t *hexpr_drt_from_csfset(int norb,
                 for (int w = 0; w < 4; w++)
                     n->upper_arc[w] = n->arc_weight[w] = n->lower_arc[w] = ARC_NIL;
                 htab_insert(h_nodes, n);
+                if (h_nodes->oom) goto oom;
             }
         }
 
@@ -1491,29 +1632,39 @@ hexpr_drt_t *hexpr_drt_from_csfset(int norb,
     }
 
     /* Sort nodes lex by (orb, nve, is) */
-    int ncount = h_nodes->order_size;
-    node_t **tmp_ptrs = malloc(ncount * sizeof(node_t *));
+    ncount = h_nodes->order_size;
+    tmp_ptrs = alloc_n((size_t)ncount, sizeof(node_t *));
+    nodes    = alloc_n((size_t)ncount, sizeof(node_t));
+    if (!tmp_ptrs || !nodes) goto oom;
     for (int i = 0; i < ncount; i++)
         tmp_ptrs[i] = h_nodes->order[i];
     qsort(tmp_ptrs, ncount, sizeof(node_t *), node_cmp);
 
-    node_t *nodes = malloc(ncount * sizeof(node_t));
     for (int i = 0; i < ncount; i++)
         nodes[i] = *tmp_ptrs[i];
     free(tmp_ptrs);
+    tmp_ptrs = NULL;
     htab_free(h_nodes);   /* frees all node_t* owned by htab */
+    h_nodes = NULL;
 
     /* Find top_index (always ncount-1 after lex sort, but scan to verify) */
     int top_index = -1;
     for (int i = ncount - 1; i >= 0; i--) {
         if (nodes[i].orb == norb) { top_index = i; break; }
     }
-    if (top_index < 0) { free(nodes); return NULL; }   /* shouldn't happen */
+    if (top_index < 0) {   /* shouldn't happen */
+        free(nodes);
+        *out_st = HEXPR_ERR_INTERNAL;
+        hexpr_set_error("hexpr_drt_from_csfset: no top node");
+        return NULL;
+    }
 
     /* Build code2num and wire upper/lower arcs */
-    htab_t *code2num_h = htab_new_n(htab_size_for(ncount));
+    code2num_h = htab_new_n(htab_size_for(ncount));
+    if (!code2num_h) goto oom;
     for (int i = 0; i < ncount; i++) {
         node_t *proxy = calloc(1, sizeof(node_t));
+        if (!proxy) goto oom;
         proxy->orb = nodes[i].orb;
         proxy->nve = nodes[i].nve;
         proxy->is  = nodes[i].is;
@@ -1524,6 +1675,7 @@ hexpr_drt_t *hexpr_drt_from_csfset(int norb,
         proxy->number_lower_arcs = ARC_NIL;
         htab_insert(code2num_h, proxy);
     }
+    if (code2num_h->oom) goto oom;
 
     for (int inode = 0; inode < ncount; inode++) {
         node_t *nd = &nodes[inode];
@@ -1542,23 +1694,28 @@ hexpr_drt_t *hexpr_drt_from_csfset(int norb,
         }
     }
     htab_free(code2num_h);
+    code2num_h = NULL;
 
     /* Compute arc counts, arc weights, and path weights */
     store_number_upper_arcs(nodes, 0, top_index);
     store_number_lower_arcs(nodes, top_index);
 
-    ivec_t *lower_pw = calloc(ncount, sizeof(ivec_t));
-    ivec_push(&lower_pw[0], 0);
-    tree_search_lower(nodes, 0, top_index, lower_pw, 0);
+    lower_pw = calloc_n((size_t)ncount, sizeof(ivec_t));
+    upper_pw = calloc_n((size_t)ncount, sizeof(ivec_t));
+    if (!lower_pw || !upper_pw) goto oom;
+    if (ivec_push(&lower_pw[0], 0) != 0 ||
+        tree_search_lower(nodes, 0, top_index, lower_pw, 0) != 0)
+        goto oom;
 
-    ivec_t *upper_pw = calloc(ncount, sizeof(ivec_t));
     for (int i = 0; i < ncount; i++) {
-        if (nodes[i].number_upper_arcs != ARC_NIL)
-            tree_search_upper(nodes, i, top_index, 0, &upper_pw[i]);
+        if (nodes[i].number_upper_arcs != ARC_NIL &&
+            tree_search_upper(nodes, i, top_index, 0, &upper_pw[i]) != 0)
+            goto oom;
     }
 
     /* Assemble result */
-    hexpr_drt_t *drt = calloc(1, sizeof(hexpr_drt_t));
+    drt = calloc(1, sizeof(hexpr_drt_t));
+    if (!drt) goto oom;
     drt->mo        = mo_init(0, norb, 0);  /* ncore=0, nval=norb, next=0 */
     drt->info.nve  = top_nve;
     drt->info.is   = top_is;
@@ -1566,11 +1723,14 @@ hexpr_drt_t *hexpr_drt_from_csfset(int norb,
     drt->nodes     = nodes;
     drt->nnodes    = ncount;
     drt->top_index = top_index;
+    nodes = NULL;                                  /* owned by drt */
 
-    drt->lower_pw   = malloc(ncount * sizeof(int *));
-    drt->lower_pw_n = malloc(ncount * sizeof(int));
-    drt->upper_pw   = malloc(ncount * sizeof(int *));
-    drt->upper_pw_n = malloc(ncount * sizeof(int));
+    drt->lower_pw   = calloc_n((size_t)ncount, sizeof(int *));
+    drt->lower_pw_n = calloc_n((size_t)ncount, sizeof(int));
+    drt->upper_pw   = calloc_n((size_t)ncount, sizeof(int *));
+    drt->upper_pw_n = calloc_n((size_t)ncount, sizeof(int));
+    if (!drt->lower_pw || !drt->lower_pw_n || !drt->upper_pw || !drt->upper_pw_n)
+        goto oom;
     for (int i = 0; i < ncount; i++) {
         drt->lower_pw[i]   = lower_pw[i].data;
         drt->lower_pw_n[i] = lower_pw[i].size;
@@ -1579,14 +1739,15 @@ hexpr_drt_t *hexpr_drt_from_csfset(int norb,
     }
     free(lower_pw);
     free(upper_pw);
+    lower_pw = upper_pw = NULL;                    /* their data is owned by drt */
 
     /* Build packed CSF buffer (may contain more paths than n_csfs if nodes shared) */
     {
         static const unsigned char CHAR_TO_STEP[256] = {
             ['e'] = 0, ['u'] = 1, ['d'] = 2, ['f'] = 3
         };
-        char **csf_list = NULL;
-        int ncsf = hexpr_drt_mk_csf_list(drt, &csf_list);
+        ncsf = hexpr_drt_mk_csf_list(drt, &csf_list);
+        if (ncsf < 0) goto oom;
 
         /* Construction-time invariant -- mirror of the one in
          * hexpr_drt_create: nodes[0] must be the walk origin (0,0,0). Every
@@ -1602,6 +1763,7 @@ hexpr_drt_t *hexpr_drt_from_csfset(int norb,
             for (int i = 0; i < ncsf; i++) free(csf_list[i]);
             free(csf_list);
             hexpr_drt_free(drt);
+            *out_st = HEXPR_ERR_INTERNAL;
             return NULL;
         }
 
@@ -1622,26 +1784,50 @@ hexpr_drt_t *hexpr_drt_from_csfset(int norb,
             for (int i = 0; i < ncsf; i++) free(csf_list[i]);
             free(csf_list);
             hexpr_drt_free(drt);
+            *out_st = HEXPR_ERR_INTERNAL;
             return NULL;
         }
 
-        drt->csf_packed   = malloc((size_t)ncsf * (size_t)norb);
+        drt->csf_packed   = alloc_n((size_t)ncsf, (size_t)norb);
+        if (!drt->csf_packed) goto oom;
         drt->ncsfs_cached = ncsf;
         for (int i = 0; i < ncsf; i++) {
             for (int j = 0; j < norb; j++)
-                drt->csf_packed[i * norb + j] = CHAR_TO_STEP[(unsigned char)csf_list[i][j]];
+                drt->csf_packed[(size_t)i * (size_t)norb + j] =
+                    CHAR_TO_STEP[(unsigned char)csf_list[i][j]];
             free(csf_list[i]);
         }
         free(csf_list);
+        csf_list = NULL;
     }
 
     /* Retain the user input set verbatim (input order) for the user-facing
      * accessors; the canonical csf_packed above may be a superset. */
-    drt->csf_input    = malloc((size_t)n_csfs * (size_t)norb);
+    drt->csf_input    = alloc_n((size_t)n_csfs, (size_t)norb);
+    if (!drt->csf_input) goto oom;
     drt->n_csfs_input = n_csfs;
     memcpy(drt->csf_input, csfs, (size_t)n_csfs * (size_t)norb);
 
+    *out_st = HEXPR_OK;
     return drt;
+
+oom:
+    if (csf_list) {
+        for (int i = 0; i < ncsf; i++) free(csf_list[i]);
+        free(csf_list);
+    }
+    if (lower_pw) for (int i = 0; i < ncount; i++) free(lower_pw[i].data);
+    if (upper_pw) for (int i = 0; i < ncount; i++) free(upper_pw[i].data);
+    free(lower_pw);
+    free(upper_pw);
+    free(tmp_ptrs);
+    free(nodes);
+    hexpr_drt_free(drt);
+    htab_free(code2num_h);
+    htab_free(h_nodes);
+    *out_st = HEXPR_ERR_OOM;
+    hexpr_set_error("hexpr_drt_from_csfset: out of memory");
+    return NULL;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1659,9 +1845,12 @@ hexpr_drt_t *hexpr_drt_from_csfset(int norb,
 void hexpr_drt_free(hexpr_drt_t *drt)
 {
     if (!drt) return;
+    /* The path-weight arrays may be absent in a DRT whose construction ran
+     * out of memory (since 1.2); they are calloc'd, so a partial one holds
+     * NULLs. */
     for (int i = 0; i < drt->nnodes; i++) {
-        free(drt->lower_pw[i]);
-        free(drt->upper_pw[i]);
+        if (drt->lower_pw) free(drt->lower_pw[i]);
+        if (drt->upper_pw) free(drt->upper_pw[i]);
     }
     free(drt->lower_pw);
     free(drt->lower_pw_n);
@@ -1876,10 +2065,18 @@ int hexpr_drt_mk_csf_list(const hexpr_drt_t *drt, char ***out_steps)
     ctx.cap     = 0;
     ctx.norb    = drt->mo.norb;
     ctx.depth   = 0;
-    ctx.csf_buf = malloc(ctx.norb + 1);
+    ctx.oom     = 0;
+    ctx.csf_buf = calloc((size_t)ctx.norb + 1, 1);   /* every walk overwrites it */
+    *out_steps  = NULL;
+    if (!ctx.csf_buf) return -1;
 
     tree_search_csf(drt->nodes, 0, drt->top_index, &ctx);
     free(ctx.csf_buf);
+    if (ctx.oom) {
+        for (int i = 0; i < ctx.size; i++) free(ctx.list[i]);
+        free(ctx.list);
+        return -1;
+    }
     *out_steps = ctx.list;
     return ctx.size;
 }

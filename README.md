@@ -5,7 +5,10 @@ CSF-based Hamiltonian matrix used in quantum chemistry CI calculations.
 Input CSFs can be supplied directly, or alternatively the full CSF set of a
 first-order CI (FOCI) or second-order CI (SOCI) space can be specified by
 its orbital classification and the library will generate the corresponding
-CSFs internally.
+CSFs internally. Since 1.2.0 it also evaluates the reduced matrix elements of
+spin-dependent one-electron operators, `<S'||(a+_p a~_q)^1||S>`, between two
+CSFs that may differ in total spin (`hexpr_rank1_pair`; the basis of
+spin-orbit and hyperfine calculations; see [CHANGELOG.md](CHANGELOG.md)).
 
 Internally, hexpr uses the Distinct Row Table (DRT) representation and
 Brooks-style loop traversal. The matrix element formulation follows
@@ -57,8 +60,9 @@ hexpr/
   (`*_med.expr.txt`) are distributed separately to keep clone size down,
   so 38 are committed in-tree. Used by the C test harness; see
   [c/README.md](c/README.md) for how to fetch the remaining 4.
-- **validation/** -- PySCF + OpenMolcas cross-validation scripts. See
-  [validation/README.md](validation/README.md).
+- **validation/** -- PySCF + OpenMolcas cross-validation scripts
+  ([validation/README.md](validation/README.md)); `validation/safety/`, the
+  memory-safety checks of each release and their results.
 - **example_ci/** -- Worked end-to-end examples that drive hexpr to CI
   energies, with PySCF- and Psi4-based integral drivers (`run_pyscf.py`
   / `run_psi4.py`) alongside Julia and Ruby versions. See

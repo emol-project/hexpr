@@ -17,7 +17,7 @@ extern "C" {
 
 /* ===== Versioning ============================================ */
 #define HEXPR_VERSION_MAJOR 1
-#define HEXPR_VERSION_MINOR 1
+#define HEXPR_VERSION_MINOR 2
 #define HEXPR_VERSION_PATCH 0
 
 const char *hexpr_version_string(void);
@@ -56,6 +56,10 @@ typedef enum {
     HEXPR_DRT_CSFSET = 2
 } hexpr_drt_kind_t;
 
+/* Returns NULL if the requested state has no DRT or memory runs out (since
+ * 1.2; hexpr_last_error() then contains "out of memory"). The same holds for
+ * hexpr_drt_from_csfset and hexpr_expr_build below, and every call that
+ * returns hexpr_status_t reports a failed allocation as HEXPR_ERR_OOM. */
 hexpr_drt_t *hexpr_drt_create(hexpr_drt_kind_t kind,
                               int nve,
                               int spin_x2,
@@ -68,7 +72,8 @@ void hexpr_drt_destroy(hexpr_drt_t *drt);
 /* Build a sub-DRT from an explicit CSF set. Each CSF must be length norb and
  * use step bytes 0..3 (HEXPR_STEP_E/U/D/F). All CSFs must share a common top
  * node. csfs is a packed buffer of n_csfs * norb bytes.
- * Returns NULL on validation failure (hexpr_last_error() is set).
+ * Returns NULL on validation failure or when memory runs out
+ * (hexpr_last_error() is set).
  *
  * User-facing CSF view (input order): for the returned CSFSET sub-DRT the
  * user-facing accessors speak the INPUT set in INPUT order -- hexpr_drt_csfs()
@@ -254,6 +259,7 @@ hexpr_status_t hexpr_drt_show(const hexpr_drt_t *, FILE *out);
 
 typedef struct hexpr_expr hexpr_expr_t;
 
+/* NULL if memory runs out (hexpr_last_error() then says so). */
 hexpr_expr_t *hexpr_expr_build(const hexpr_drt_t *);
 void          hexpr_expr_destroy(hexpr_expr_t *);
 
@@ -431,6 +437,38 @@ hexpr_status_t hexpr_subspace_max_terms(const hexpr_drt_t *drt,
                                          int n,
                                          hexpr_expr_which_t which,
                                          int *out_max);
+
+/* ===== Spin-dependent one-electron operators (rank 1) ========= */
+
+/* Reduced matrix elements of the one-electron triplet operators
+ *
+ *     T^1(pq) = (a+_p a~_q)^1,   a~_{q,+1/2} = a_{q,beta}, a~_{q,-1/2} = -a_{q,alpha},
+ *
+ * between a bra CSF (total spin S') and a ket CSF (total spin S), given as step
+ * vectors of length norb (bytes 0..3 = e,u,d,f; step[0] is the lowest orbital,
+ * as in hexpr_csf_steps). The two CSFs may have different S; no DRT is used.
+ *
+ * Convention (Edmonds):
+ *     <S'M'| T^1_m(pq) |SM> = (-1)^(S'-M') ( S' 1 S ; -M' m M ) R_pq
+ * Each term is (out_p[k], out_q[k], out_R[k] = R_pq), 0-based orbitals, |R| >
+ * 1e-12. The one-electron spin density is s_m(pq) = -T^1_m(pq)/sqrt(2), so a
+ * spin-orbit operator sum_pq sum_m (-1)^m h_{pq,-m} s_m(pq) has the matrix
+ * element -(1/sqrt 2) (-1)^(S'-M') sum_m (-1)^m (3j) sum_pq h_{pq,-m} R_pq.
+ * Exchanging bra and ket: R_qp(ket,bra) = (-1)^(S'-S) R_pq(bra,ket).
+ *
+ * Terms are non-zero only if the occupations agree (then p = q, open shells
+ * only) or differ by one electron moved from q (ket) to p (bra), and only if
+ * |S'-S| <= 1 <= S'+S; otherwise *out_count = 0. At most
+ * hexpr_rank1_max_terms(norb) terms. out_p/out_q/out_R may be NULL.
+ * Limits: norb <= 256, partial 2S <= 14 along both walks (HEXPR_ERR_INVALID_ARG
+ * or HEXPR_ERR_RANGE otherwise). Thread-safe. */
+int hexpr_rank1_max_terms(int norb);
+hexpr_status_t hexpr_rank1_pair(int norb,
+                                const unsigned char *bra_steps,
+                                const unsigned char *ket_steps,
+                                int *out_count,
+                                int32_t *out_p, int32_t *out_q,
+                                double *out_R);
 
 #pragma GCC visibility pop
 

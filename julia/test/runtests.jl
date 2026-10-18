@@ -8,4 +8,5 @@ using HExpr
     include("test_csfset.jl")
     include("test_pair.jl")
     include("test_completeness.jl")
+    include("test_rank1.jl")
 end

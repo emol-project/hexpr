@@ -16,6 +16,7 @@ typedef struct {
 
 typedef struct dhash dhash_t;
 
+/* NULL if the table cannot be allocated. */
 dhash_t *dhash_create(void);
 
 /* Free the table.  If free_val != NULL, call it on every stored value. */
@@ -27,8 +28,10 @@ void    *dhash_get   (const dhash_t *h, dhash_key_t key);
 /* Returns 1 if key is present, 0 otherwise. */
 int      dhash_has   (const dhash_t *h, dhash_key_t key);
 
-/* Insert or update.  val must not be NULL (NULL means absent). */
-void     dhash_set   (dhash_t *h, dhash_key_t key, void *val);
+/* Insert or update.  val must not be NULL (NULL means absent).
+ * Returns 0, or -1 if growing the table fails; the table is then unchanged
+ * (the key is not stored, and the caller still owns val). */
+int      dhash_set   (dhash_t *h, dhash_key_t key, void *val);
 
 /* Remove key; no-op if not present. */
 void     dhash_delete(dhash_t *h, dhash_key_t key);

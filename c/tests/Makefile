@@ -11,10 +11,13 @@ ifeq ($(UNAME_S),Darwin)
   RPATH_TEST := -Wl,-rpath,@loader_path/..
   DL_LIB     :=
   RT_LIB     :=
+  # test_oom needs GNU ld's --wrap, which the macOS linker does not have.
+  TEST_OOM   :=
 else
   RPATH_TEST :=
   DL_LIB     := -ldl
   RT_LIB     := -lrt
+  TEST_OOM   := test_oom
 endif
 
 LDFLAGS  = -L.. $(RPATH_TEST)
@@ -40,7 +43,8 @@ TESTS_CORE = test_compare test_wigner test_drt test_expr test_full \
              test_pair_one_4o4e test_pair_full_4o4e test_block_subspace_4o4e \
              test_pair_aggregate test_max_terms test_drt_from_csfset \
              test_csfset_pair test_ncsfs_consistency test_lk_table test_lk_twophase \
-             test_csf2det test_pair_full_union test_pair_threads
+             test_csf2det test_pair_full_union test_pair_threads test_rank1 \
+             $(TEST_OOM)
 
 .PHONY: all check check-slow clean
 
@@ -106,6 +110,15 @@ test_pair_threads: test_pair_threads.c
 test_csf2det: test_csf2det.c
 	$(CC) $(CFLAGS) $(CPPFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
+test_rank1: test_rank1.c
+	$(CC) $(CFLAGS) $(CPPFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+
+# Allocation-failure injection: the static archive, with malloc/calloc/realloc
+# routed through the test's wrappers (GNU ld --wrap; Linux only).
+test_oom: test_oom.c
+	$(CC) $(CFLAGS) $(CPPFLAGS) -o $@ $^ $(LDLIBS_STATIC) \
+	    -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc
+
 # Self-contained: exercises the POD lk_table.h directly, no libhexpr link.
 test_lk_table: test_lk_table.c ../src/loopgen/lk_table.h
 	$(CC) $(CFLAGS) $(CPPFLAGS) -I../src/loopgen -o $@ test_lk_table.c
@@ -149,6 +162,8 @@ check: $(TESTS_CORE)
 	LD_LIBRARY_PATH=$(LIBDIR) ./test_pair_threads                          || failures=$$((failures+1)); \
 	LD_LIBRARY_PATH=$(LIBDIR) ./test_lk_table                              || failures=$$((failures+1)); \
 	LD_LIBRARY_PATH=$(LIBDIR) ./test_lk_twophase                           || failures=$$((failures+1)); \
+	LD_LIBRARY_PATH=$(LIBDIR) ./test_rank1                                 || failures=$$((failures+1)); \
+	if [ -n "$(TEST_OOM)" ]; then ./test_oom                               || failures=$$((failures+1)); fi; \
 	if [ $$failures -eq 0 ]; then echo "ALL TESTS PASSED"; else echo "$$failures TEST(S) FAILED"; fi; \
 	exit $$failures
 

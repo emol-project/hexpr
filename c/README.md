@@ -135,7 +135,7 @@ Source: [`c/wig/example.c`](wig/example.c)
 
 ## Library structure
 c/
-+-- include/hexpr.h          Public API header (v1.1.0; 1.0.0 declarations unchanged)
++-- include/hexpr.h          Public API header (v1.2.0; 1.0.0 and 1.1.0 declarations unchanged)
 +-- src/
 |   +-- common/              Shared utilities: fmt, darr, dhash, sort
 |   +-- loopgen/             DRT construction + Brooks expression

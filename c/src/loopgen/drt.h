@@ -44,7 +44,13 @@ int hexpr_drt_number_lower_arcs(const hexpr_drt_t *drt, int inode);
 const int *hexpr_drt_lower_path_weights(const hexpr_drt_t *drt, int inode, int *out_n);
 const int *hexpr_drt_upper_path_weights(const hexpr_drt_t *drt, int inode, int *out_n);
 
-/* CSF list -- caller frees each element. Returns ncsf, or -1 on error. */
+/* CSF list -- caller frees each element. Returns ncsf, or -1 on error (out
+ * of memory; *out_steps is then NULL and nothing is left to free). */
 int hexpr_drt_mk_csf_list(const hexpr_drt_t *drt, char ***out_steps);
+
+/* hexpr_drt_from_csfset that also reports why it failed: *out_st is
+ * HEXPR_OK, HEXPR_ERR_INVALID_ARG (a rejected input) or HEXPR_ERR_OOM. */
+hexpr_drt_t *hexpr_drt_from_csfset_st(int norb, const unsigned char *csfs,
+                                      int n_csfs, hexpr_status_t *out_st);
 
 #endif /* HEXPR_DRT_H_ */

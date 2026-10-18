@@ -53,7 +53,7 @@ module hexpr_mod
   ! clash with the runtime functions hexpr_version_major/minor/patch.
   ! ----------------------------------------------------------------
   integer(c_int), parameter, public :: HEXPR_VMAJOR = 1_c_int
-  integer(c_int), parameter, public :: HEXPR_VMINOR = 1_c_int
+  integer(c_int), parameter, public :: HEXPR_VMINOR = 2_c_int
   integer(c_int), parameter, public :: HEXPR_VPATCH = 0_c_int
 
   ! ----------------------------------------------------------------
@@ -662,6 +662,28 @@ module hexpr_mod
       integer(c_int)              :: status
     end function c_hexpr_subspace_eval
 
+    ! ---- Rank-1 one-electron operators (since 1.2) ----------------
+
+    function c_hexpr_rank1_max_terms(norb) &
+        bind(C, name="hexpr_rank1_max_terms") result(nmax)
+      import :: c_int
+      implicit none
+      integer(c_int), value :: norb
+      integer(c_int)        :: nmax
+    end function c_hexpr_rank1_max_terms
+
+    function c_hexpr_rank1_pair(norb, bra_steps, ket_steps, out_count, &
+                                 out_p, out_q, out_r) &
+        bind(C, name="hexpr_rank1_pair") result(status)
+      import :: c_ptr, c_int
+      implicit none
+      integer(c_int), value       :: norb
+      type(c_ptr),    value       :: bra_steps, ket_steps
+      integer(c_int), intent(out) :: out_count
+      type(c_ptr),    value       :: out_p, out_q, out_r
+      integer(c_int)              :: status
+    end function c_hexpr_rank1_pair
+
   end interface
 
   ! ----------------------------------------------------------------
@@ -693,6 +715,7 @@ module hexpr_mod
   public :: hexpr_pair_count_full, hexpr_pair_eval_full
   public :: hexpr_block_count_full, hexpr_block_eval_full
   public :: hexpr_subspace_count, hexpr_subspace_max_terms, hexpr_subspace_eval
+  public :: hexpr_rank1_max_terms, hexpr_rank1_pair
 
 contains
 
@@ -1322,5 +1345,36 @@ contains
                                     c_loc(out_bra_pos), c_loc(out_ket_pos), &
                                     c_loc(out_ij), c_loc(out_pqrs), c_loc(out_coef))
   end function hexpr_subspace_eval
+
+  ! ================================================================
+  ! (k) Rank-1 one-electron operators (since 1.2)
+  !
+  ! Reduced matrix elements R_pq = <S'||(a+_p a~_q)^1||S> between a bra
+  ! and a ket CSF given as step codes (0..3 = e,u,d,f; no DRT); the two
+  ! CSFs may have different total spin. Convention (Edmonds):
+  !   <S'M'|T^1_m(pq)|SM> = (-1)^(S'-M') (S' 1 S; -M' m M) R_pq,
+  ! and the one-electron spin density is s_m(pq) = -T^1_m(pq)/sqrt(2).
+  ! See hexpr_rank1_pair in hexpr.h. out_p/out_q (0-based orbitals) and
+  ! out_r must hold at least hexpr_rank1_max_terms(norb) elements.
+  ! ================================================================
+
+  function hexpr_rank1_max_terms(norb) result(nmax)
+    integer(c_int), intent(in) :: norb
+    integer(c_int) :: nmax
+    nmax = c_hexpr_rank1_max_terms(norb)
+  end function hexpr_rank1_max_terms
+
+  function hexpr_rank1_pair(norb, bra_steps, ket_steps, out_count, &
+                             out_p, out_q, out_r) result(status)
+    integer(c_int),             intent(in)  :: norb
+    integer(c_int8_t),  target, intent(in)  :: bra_steps(:), ket_steps(:)
+    integer(c_int),             intent(out) :: out_count
+    integer(c_int32_t), target, intent(out) :: out_p(:), out_q(:)
+    real(c_double),     target, intent(out) :: out_r(:)
+    integer(c_int) :: status
+    status = c_hexpr_rank1_pair(norb, c_loc(bra_steps), c_loc(ket_steps), &
+                                 out_count, c_loc(out_p), c_loc(out_q), &
+                                 c_loc(out_r))
+  end function hexpr_rank1_pair
 
 end module hexpr_mod

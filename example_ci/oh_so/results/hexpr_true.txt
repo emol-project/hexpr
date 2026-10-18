@@ -1,0 +1,16 @@
+basis cc-pvtz, nao 44; ROHF -75.4144656124; SA-CASSCF(7,5) Pi components -75.4376161432 -75.4376161432
+doublet CAS: 40 CSFs, lowest roots (Eh) -75.4376161432 -75.4376161432 -75.2561980109 -74.7673580865
+doublet-doublet CSF spin-orbit matrix, hexpr vs determinants: max |diff| = 6.1e-19 Eh
+
+spin-orbit levels (cm-1 above the lowest), Omega = |J_z|:
+        0.0000   Omega = 1.5000
+        0.0000   Omega = 1.5000
+      213.7549   Omega = 0.5000
+      213.7549   Omega = 0.5000
+    39924.1574   Omega = 0.5000
+    39924.1574   Omega = 0.5000
+   147211.7551   Omega = 0.5000
+   147211.7551   Omega = 0.5000
+
+A = E(2Pi_3/2) - E(2Pi_1/2) = -213.7549 cm-1  (true charges; experiment -139.2 cm-1)
+GAMESS (oh_so_true.log): A = -213.7544 cm-1 in CODATA 2018 units (-213.758 as printed); difference -4.9e-04 cm-1

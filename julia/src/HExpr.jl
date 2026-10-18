@@ -607,6 +607,33 @@ function csf_pair_eval_full(bra_steps::AbstractVector{UInt8},
     pair_eval_full(Drt(stacked, norb_val), Int32(0), Int32(1); which=which)
 end
 
+# Reduced matrix elements R_pq = <S'||(a+_p a~_q)^1||S> of the one-electron
+# triplet operators between a bra and a ket CSF given as step codes (since
+# 1.2). The two CSFs may have different total spin; no DRT is built.
+# Convention (Edmonds): <S'M'|T^1_m(pq)|SM> = (-1)^(S'-M') (S' 1 S; -M' m M) R_pq;
+# the one-electron spin density is s_m(pq) = -T^1_m(pq)/sqrt(2). See
+# hexpr_rank1_pair in hexpr.h. Returns (p, q, R), 0-based orbitals.
+function rank1_pair(bra_steps::AbstractVector{UInt8},
+                    ket_steps::AbstractVector{UInt8})
+    norb_val = length(bra_steps)
+    length(ket_steps) == norb_val ||
+        error("bra_steps length $norb_val != ket_steps length $(length(ket_steps))")
+    bra = Vector{UInt8}(bra_steps)
+    ket = Vector{UInt8}(ket_steps)
+    nmax = max(Int(ccall((:hexpr_rank1_max_terms, _LIBHEXPR), Cint, (Cint,), norb_val)), 1)
+    p = zeros(Int32, nmax)
+    q = zeros(Int32, nmax)
+    r = zeros(Float64, nmax)
+    out_count = Ref{Cint}(0)
+    status = ccall((:hexpr_rank1_pair, _LIBHEXPR), Cint,
+                   (Cint, Ptr{UInt8}, Ptr{UInt8}, Ref{Cint},
+                    Ptr{Int32}, Ptr{Int32}, Ptr{Float64}),
+                   norb_val, bra, ket, out_count, p, q, r)
+    status == HEXPR_OK || error("hexpr_rank1_pair failed: $(last_error())")
+    n = Int(out_count[])
+    p[1:n], q[1:n], r[1:n]
+end
+
 function csf_block_eval(bra_csfs::AbstractMatrix{UInt8},
                         ket_csfs::AbstractMatrix{UInt8};
                         which::Symbol=:full)
@@ -646,6 +673,7 @@ export pair_count, pair_max_terms, pair_eval, pair_count_full, pair_eval_full
 export block_count, block_max_terms, block_eval, block_count_full, block_eval_full
 export subspace_count, subspace_max_terms, subspace_eval
 export csf_pair_eval, csf_pair_eval_full, csf_block_eval, csf_subspace_eval
+export rank1_pair
 export HEXPR_OK, HEXPR_DRT_SOCI, HEXPR_DRT_FOCI, HEXPR_DRT_CSFSET
 export HEXPR_EXPR_FULL, HEXPR_EXPR_ONE
 export HEXPR_STEP_E, HEXPR_STEP_U, HEXPR_STEP_D, HEXPR_STEP_F

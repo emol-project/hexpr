@@ -1,3 +1,4 @@
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
@@ -90,13 +91,16 @@ static dhash_bucket_t *probe(dhash_t *h, dhash_key_t key, int insert)
 
 /**
  * @brief Allocate an empty hash table (initial capacity 16 buckets).
- * @return a new table; release with @ref dhash_free. Pairs with @ref dhash_free.
+ * @return a new table, or NULL if it cannot be allocated; release with
+ *         @ref dhash_free.
  */
 dhash_t *dhash_create(void)
 {
     dhash_t *h = calloc(1, sizeof(dhash_t));
+    if (!h) return NULL;
     h->n_buckets = 16;
     h->buckets   = calloc((size_t)h->n_buckets, sizeof(dhash_bucket_t));
+    if (!h->buckets) { free(h); return NULL; }
     return h;
 }
 
@@ -128,14 +132,19 @@ void dhash_free(dhash_t *h, void (*free_val)(void *))
  *       drops all tombstones, so @c n_total is rebuilt to equal @c n_occupied
  *       (this is the only place the deleted-slot count is reclaimed). Values are
  *       relocated by pointer; the pointees are not touched.
+ * @return 0, or -1 if the new bucket array cannot be allocated (the table is
+ *         then left exactly as it was).
  */
-static void dhash_rehash(dhash_t *h)
+static int dhash_rehash(dhash_t *h)
 {
     int old_nb = h->n_buckets;
     dhash_bucket_t *old_b = h->buckets;
     int i;
+    if (old_nb > INT_MAX / 2) return -1;
+    dhash_bucket_t *nb = calloc((size_t)old_nb * 2, sizeof(dhash_bucket_t));
+    if (!nb) return -1;
     h->n_buckets = old_nb * 2;
-    h->buckets   = calloc((size_t)h->n_buckets, sizeof(dhash_bucket_t));
+    h->buckets   = nb;
     /* Reset both counters: the loop below recounts from live entries only, so
      * tombstones vanish and n_total drops back to n_occupied. */
     h->n_occupied = 0;
@@ -143,12 +152,27 @@ static void dhash_rehash(dhash_t *h)
     for (i = 0; i < old_nb; i++) {
         if (old_b[i].state == DHASH_OCCUPIED) {
             dhash_bucket_t *b = probe(h, old_b[i].key, 1);
+            if (!b) {
+                /* Cannot happen (twice the buckets, below 70% load); if it
+                 * did, restore the old table rather than drop an entry. */
+                free(nb);
+                h->n_buckets = old_nb;
+                h->buckets   = old_b;
+                h->n_occupied = h->n_total = 0;
+                for (int j = 0; j < old_nb; j++)
+                    if (old_b[j].state != DHASH_EMPTY) {
+                        h->n_total++;
+                        if (old_b[j].state == DHASH_OCCUPIED) h->n_occupied++;
+                    }
+                return -1;
+            }
             *b = old_b[i];
             h->n_occupied++;
             h->n_total++;
         }
     }
     free(old_b);
+    return 0;
 }
 
 /**
@@ -188,14 +212,16 @@ int dhash_has(const dhash_t *h, dhash_key_t key)
  * @note May trigger @ref dhash_rehash, which moves buckets and so invalidates
  *       any bucket pointer or iteration in progress (values/keys themselves
  *       survive). O(1) amortized.
+ * @return 0, or -1 if the table had to grow and could not; nothing is then
+ *         stored and the caller still owns @p val.
  */
-void dhash_set(dhash_t *h, dhash_key_t key, void *val)
+int dhash_set(dhash_t *h, dhash_key_t key, void *val)
 {
     /* Load factor uses n_total (occupied + tombstones), NOT n_occupied, so a
      * table churned by many deletes still rehashes and reclaims its tombstones. */
     /* Resize when total (occupied+deleted) >= 70% capacity */
     if ((h->n_total + 1) * 10 > h->n_buckets * 7)
-        dhash_rehash(h);
+        if (dhash_rehash(h) != 0) return -1;
     dhash_bucket_t *b = probe(h, key, 1);
     if (b->state == DHASH_OCCUPIED) {
         b->val = val;
@@ -208,6 +234,7 @@ void dhash_set(dhash_t *h, dhash_key_t key, void *val)
         b->state = DHASH_OCCUPIED;
         h->n_occupied++;
     }
+    return 0;
 }
 
 /**

@@ -196,7 +196,7 @@ argument lists and return types, see the source:
 | `HEXPR_DRT_SOCI` / `HEXPR_DRT_FOCI` / `HEXPR_DRT_CSFSET` | 0 / 1 / 2 | DRT kind |
 | `HEXPR_EXPR_FULL` / `HEXPR_EXPR_ONE` | 0 / 1 | Expression selector |
 | `HEXPR_STEP_E/U/D/F` | 0 to 3 | CSF step codes |
-| `HEXPR_VMAJOR` / `HEXPR_VMINOR` / `HEXPR_VPATCH` | 1 / 0 / 0 | Version (see Caveats) |
+| `HEXPR_VMAJOR` / `HEXPR_VMINOR` / `HEXPR_VPATCH` | 1 / 2 / 0 | Version (see Caveats) |
 
 **Procedures**
 

@@ -44,6 +44,8 @@
  */
 #include "csf_pair_core.h"
 #include "csf_lookup.h"
+#include "drt.h"
+#include "hexpr_error.h"
 #include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -138,8 +140,12 @@ static void merge_terms(ot_vec_t *v)
  * @param bra,ket canonical CSF indices of the pair.
  * @param full 0 = the v1.0 direction-selected set; 1 = the complete
  *        decomposition (the v1.1 *_full calls).
- * @return an ::ot_vec_t of contributing terms; the CALLER owns and must free
- *         @c .data. Empty (NULL data) on allocation failure or an invalid pair.
+ * @param[out] out the contributing terms; the CALLER owns and must free
+ *         @c out->data. Empty unless the call returns @c HEXPR_OK.
+ * @return @c HEXPR_OK; @c HEXPR_ERR_OOM if memory runs out;
+ *         @c HEXPR_ERR_INTERNAL if a walk cannot be decoded (which the
+ *         validated indices rule out). Before 1.2 both returned no terms with
+ *         success.
  *
  * Role: the single evaluation core every public pair/block/subspace call funnels
  * through. Data flow: (1) recover the two CSFs' step paths from the full DRT via
@@ -167,35 +173,49 @@ static void merge_terms(ot_vec_t *v)
  * (hexpr_drt_from_csfset). Canonical indexing follows the Shavitt addressing
  * documented in csf_lookup.c. See Sec. 2.4, Eq.12, Eq.16, Sec. 4.1.
  */
-static ot_vec_t pair_via_subdrt(const hexpr_drt_t *drt, int bra, int ket,
-                                int full)
+static hexpr_status_t pair_via_subdrt(const hexpr_drt_t *drt, int bra, int ket,
+                                      int full, ot_vec_t *out)
 {
-    ot_vec_t empty = {NULL, 0, 0};
+    static const char FN[] = "pair evaluation";
+    ot_vec_t empty = {NULL, 0, 0, 0};
+    *out = empty;
     int norb = hexpr_drt_norb(drt);
     /* Recover the two CSFs as step paths in the full DRT's canonical system. */
     unsigned char *bra_steps = malloc((size_t)norb);
     unsigned char *ket_steps = malloc((size_t)norb);
-    if (!bra_steps || !ket_steps) { free(bra_steps); free(ket_steps); return empty; }
+    if (!bra_steps || !ket_steps) {
+        free(bra_steps); free(ket_steps);
+        hexpr_set_error("%s: out of memory", FN);
+        return HEXPR_ERR_OOM;
+    }
     /* A decode failure here must not fall through with a partly (or wholly)
      * uninitialized step buffer -- that buffer would otherwise go straight
-     * into hexpr_drt_from_csfset below. */
+     * into hexpr_drt_from_csfset below. The indices were validated by the
+     * caller, so this cannot happen; before 1.2 it returned no terms and OK,
+     * now it is reported. */
     if (hexpr_drt_walk_csf_steps(drt, bra, bra_steps) != HEXPR_OK ||
         hexpr_drt_walk_csf_steps(drt, ket, ket_steps) != HEXPR_OK) {
         free(bra_steps); free(ket_steps);
-        return empty;
+        hexpr_set_error("%s: walk %d or %d does not decode", FN, bra, ket);
+        return HEXPR_ERR_INTERNAL;
     }
 
     /* Pack the pair into a tiny CSF set (one row if bra==ket) and build the
      * per-pair sub-DRT over it. */
     int n_sub = (bra == ket) ? 1 : 2;
     unsigned char *csf_buf = malloc((size_t)n_sub * (size_t)norb);
-    if (!csf_buf) { free(bra_steps); free(ket_steps); return empty; }
+    if (!csf_buf) {
+        free(bra_steps); free(ket_steps);
+        hexpr_set_error("%s: out of memory", FN);
+        return HEXPR_ERR_OOM;
+    }
     memcpy(csf_buf, bra_steps, (size_t)norb);
     if (n_sub == 2) memcpy(csf_buf + norb, ket_steps, (size_t)norb);
 
-    hexpr_drt_t *sub = hexpr_drt_from_csfset(norb, csf_buf, n_sub);
+    hexpr_status_t st = HEXPR_OK;
+    hexpr_drt_t *sub = hexpr_drt_from_csfset_st(norb, csf_buf, n_sub, &st);
     free(csf_buf);
-    if (!sub) { free(bra_steps); free(ket_steps); return empty; }
+    if (!sub) { free(bra_steps); free(ket_steps); return st; }
 
     /* Re-index the same step paths within the sub-DRT (their local indices). */
     int sub_bra = 0, sub_ket = 0;
@@ -203,7 +223,8 @@ static ot_vec_t pair_via_subdrt(const hexpr_drt_t *drt, int bra, int ket,
         hexpr_drt_walk_csf_index(sub, ket_steps, &sub_ket) != HEXPR_OK) {
         free(bra_steps); free(ket_steps);
         hexpr_drt_destroy(sub);
-        return empty;
+        hexpr_set_error("%s: walk %d or %d not in its sub-DRT", FN, bra, ket);
+        return HEXPR_ERR_INTERNAL;
     }
     ot_vec_t result;
     if (!full) {
@@ -216,19 +237,31 @@ static ot_vec_t pair_via_subdrt(const hexpr_drt_t *drt, int bra, int ket,
          * makes the two directions together cheaper than one unrestricted
          * one. The union equals that of the unrestricted directions
          * (c/tests/test_pair_full_union.c). */
-        hexpr_loopgen_set_walks(sub, bra_steps, ket_steps);
-        result = pair_eval_internal(sub, sub_bra, sub_ket);
-        if (sub_bra != sub_ket) {
-            hexpr_loopgen_set_walks(sub, ket_steps, bra_steps);
-            ot_vec_t back = pair_eval_internal(sub, sub_ket, sub_bra);
-            for (int i = 0; i < back.size; i++) ot_push(&result, &back.data[i]);
-            free(back.data);
+        result = empty;
+        if (hexpr_loopgen_set_walks(sub, bra_steps, ket_steps) != 0)
+            result.oom = 1;
+        else
+            result = pair_eval_internal(sub, sub_bra, sub_ket);
+        if (sub_bra != sub_ket && !result.oom) {
+            if (hexpr_loopgen_set_walks(sub, ket_steps, bra_steps) != 0) {
+                result.oom = 1;
+            } else {
+                ot_vec_t back = pair_eval_internal(sub, sub_ket, sub_bra);
+                if (back.oom) result.oom = 1;
+                for (int i = 0; i < back.size; i++) ot_push(&result, &back.data[i]);
+                free(back.data);
+            }
         }
         hexpr_loopgen_set_walks(NULL, NULL, NULL);
-        merge_terms(&result);
+        if (!result.oom) merge_terms(&result);
     }
     free(bra_steps); free(ket_steps);
     hexpr_drt_destroy(sub);
+    if (result.oom) {
+        free(result.data);
+        hexpr_set_error("%s: out of memory", FN);
+        return HEXPR_ERR_OOM;
+    }
 
     /* Terms carry the sub-DRT-local pair address; rewrite it to the global one
      * so callers see ij in the full DRT's pair-index system. */
@@ -236,7 +269,8 @@ static ot_vec_t pair_via_subdrt(const hexpr_drt_t *drt, int bra, int ket,
     int new_ij = triangle(bra, ket);
     for (int i = 0; i < result.size; i++)
         if (result.data[i].ij == old_ij) result.data[i].ij = new_ij;
-    return result;
+    *out = result;
+    return HEXPR_OK;
 }
 
 /**
@@ -250,7 +284,8 @@ static ot_vec_t pair_via_subdrt(const hexpr_drt_t *drt, int bra, int ket,
  * @param[out] out_count receives the term count.
  * @param full 0 = direction-selected set, 1 = complete decomposition.
  * @return @c HEXPR_OK; @c HEXPR_ERR_INVALID_ARG on NULL; @c HEXPR_ERR_RANGE if an
- *         index is out of @c [0, hexpr_drt_ncsfs()).
+ *         index is out of @c [0, hexpr_drt_ncsfs()); @c HEXPR_ERR_OOM if memory
+ *         runs out (@c *out_count is then not set).
  *
  * Role: a thin count over @ref pair_via_subdrt. It evaluates the pair, then
  * tallies terms, skipping two-electron terms (@c pqrs >= n_oel) when @p which is
@@ -276,7 +311,9 @@ static hexpr_status_t pair_count_impl(const hexpr_drt_t *drt, int bra, int ket,
     free(scratch);
 
     int n_oel = hexpr_drt_norb(drt); n_oel = n_oel * (n_oel + 1) / 2;
-    ot_vec_t v = pair_via_subdrt(drt, wbra, wket, full);
+    ot_vec_t v;
+    hexpr_status_t st = pair_via_subdrt(drt, wbra, wket, full, &v);
+    if (st != HEXPR_OK) return st;
     /* Count terms, dropping two-electron ones (pqrs >= n_oel) in ONE mode. */
     int cnt = 0;
     for (int i = 0; i < v.size; i++) {
@@ -301,7 +338,8 @@ static hexpr_status_t pair_count_impl(const hexpr_drt_t *drt, int bra, int ket,
  *             to skip that column.
  * @param full 0 = direction-selected set, 1 = complete decomposition.
  * @return @c HEXPR_OK; @c HEXPR_ERR_INVALID_ARG on NULL drt/out_count;
- *         @c HEXPR_ERR_RANGE if an index is out of range.
+ *         @c HEXPR_ERR_RANGE if an index is out of range; @c HEXPR_ERR_OOM if
+ *         memory runs out (@c *out_count is then not set).
  *
  * Role: the emitting twin of @ref hexpr_pair_count -- same evaluate-and-filter
  * over @ref pair_via_subdrt, but it copies the surviving terms into the parallel
@@ -329,7 +367,9 @@ static hexpr_status_t pair_eval_impl(const hexpr_drt_t *drt, int bra, int ket,
     free(scratch);
 
     int n_oel = hexpr_drt_norb(drt); n_oel = n_oel * (n_oel + 1) / 2;
-    ot_vec_t v = pair_via_subdrt(drt, wbra, wket, full);
+    ot_vec_t v;
+    hexpr_status_t st = pair_via_subdrt(drt, wbra, wket, full, &v);
+    if (st != HEXPR_OK) return st;
     /* Copy kept terms into the (optional) parallel output columns; k counts
      * survivors, skipping two-electron terms in ONE mode. */
     int k = 0;
@@ -410,8 +450,9 @@ hexpr_status_t hexpr_pair_eval_full(const hexpr_drt_t *drt, int bra, int ket,
  * @param emit 0 = count only (no writes); 1 = also write the output columns.
  * @param full 0 = direction-selected sets, 1 = complete decompositions.
  * @return @c HEXPR_OK; @c HEXPR_ERR_INVALID_ARG on NULL/negative sizes/missing
- *         index arrays; @c HEXPR_ERR_OOM if the translation buffers cannot be
- *         allocated; @c HEXPR_ERR_RANGE if any index is out of range.
+ *         index arrays; @c HEXPR_ERR_OOM if memory runs out (the translation
+ *         buffers, or since 1.2 any pair evaluation; @c *out_count is then not
+ *         set); @c HEXPR_ERR_RANGE if any index is out of range.
  *
  * Role: the single implementation behind @ref hexpr_block_count (@c emit=0) and
  * @ref hexpr_block_eval (@c emit=1); the subspace calls reach it through those
@@ -473,7 +514,14 @@ static hexpr_status_t block_eval_impl(
     int k = 0;
     for (int ip = 0; ip < n_bra; ip++) {
         for (int jp = 0; jp < n_ket; jp++) {
-            ot_vec_t v = pair_via_subdrt(drt, bra_walk[ip], ket_walk[jp], full);
+            ot_vec_t v;
+            hexpr_status_t st = pair_via_subdrt(drt, bra_walk[ip], ket_walk[jp], full, &v);
+            if (st != HEXPR_OK) {
+                /* Nothing is returned on failure: the caller's arrays may hold
+                 * the terms written so far, but out_count is not set. */
+                free(bra_walk); free(ket_walk);
+                return st;
+            }
             for (int i = 0; i < v.size; i++) {
                 const out_term_t *t = &v.data[i];
                 if (which == HEXPR_EXPR_ONE && t->pqrs >= n_oel) continue;

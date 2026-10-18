@@ -1,0 +1,26 @@
+RHF -38.8670698382
+2S=0: 175 CSFs, E0 = -38.8866729413
+2S=2: 189 CSFs, E0 = -38.8766358360
+PySCF CASCI singlet -38.8866729413, triplet -38.8766358360
+
+CSF spin-orbit matrix, hexpr vs determinants, all M: max |diff| = 1.49e-19 Eh  (largest element 9.317e-05 Eh)  [1.7s]
+
+singlet-triplet coupling sqrt(sum_M |<S n|H_SO|T k,M>|^2) (cm-1), rows S n, columns T k:
+  S0:    19.8487    19.6677     0.0000
+  S1:     0.0000    15.1401     6.4692
+  S2:    25.9616     0.4345     0.0000
+
+spin-free states (cm-1 above the lowest):
+  2S=0:       0.00,   16793.11,   41490.11
+  2S=2:    2202.89,   44008.26,   57736.91
+spin-orbit levels (cm-1 above the lowest):
+  0.0000, 2203.0716, 2203.0768, 2203.2338, 16793.2928, 41490.3179, 44008.4574, 44008.4606, 44008.4665, 57737.0947, 57737.0949, 57737.0952
+
+GAMESS: energies of 16 states matched to exact roots (|dE| < 1e-7):
+  2S=0: GAMESS root -> exact root 1->1, 2->3, 3->5, 4->6, 5->7, 6->10, 7->14, 8->15
+  2S=2: GAMESS root -> exact root 1->1, 2->2, 3->3, 4->4, 5->5, 6->6, 7->7, 8->8
+GAMESS HSO elements compared: 444, max | |hexpr| - |GAMESS| | = 3.3e-04 cm-1 (GAMESS prints 4 decimals)
+  largest difference at <1-1A MS=0.0|HSO|2-3A MS=0.0>, |GAMESS| = 19.6680 cm-1
+  |GAMESS|/|hexpr| over 70 elements > 5 cm-1: mean 1.00001611, min 1.00000843, max 1.00002029
+  GAMESS hartree->cm-1 relative to CODATA 2018 (219474.6313632), from its level list: 1.00001703 (spread 2.0e-08); levels agree to 6.4e-04 cm-1 after it
+  with that unit: max | f|hexpr| - |GAMESS| | = 5.4e-05 cm-1 over all 444 elements (print rounding 5e-5)

@@ -1,9 +1,9 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite both the software and the methodology paper (see preferred-citation)."
 title: hexpr
-abstract: "C library and multi-language bindings for generating expressions of the CSF-based Hamiltonian matrix used in quantum-chemistry CI calculations."
+abstract: "C library and multi-language bindings for generating expressions of the CSF-based Hamiltonian matrix used in quantum-chemistry CI calculations, and the reduced matrix elements of spin-dependent (rank-1) one-electron operators between CSFs."
 type: software
-version: 1.1.0
+version: 1.2.0
 license: MIT
 repository-code: "https://github.com/emol-project/hexpr"
 url: "https://github.com/emol-project/hexpr"
@@ -13,7 +13,7 @@ authors:
     orcid: "https://orcid.org/0009-0004-7674-5540"
   - family-names: Noro
     given-names: Takeshi
-date-released: "2026-10-12"
+date-released: "2026-10-18"
 doi: "10.5281/zenodo.22974832"
 identifiers:
   - type: doi
@@ -25,6 +25,7 @@ identifiers:
   - type: doi
     value: "10.5281/zenodo.23308333"
     description: "Version 1.1.0"
+  # TODO after the release: the version 1.2.0 DOI from Zenodo (here and in README)
 preferred-citation:
   type: article
   title: "hexpr: A Configuration State Function Based Hamiltonian Matrix Element Expression Library"

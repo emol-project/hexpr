@@ -1,3 +1,4 @@
+#include <limits.h>
 #include <stdlib.h>
 #include "darr.h"
 
@@ -20,12 +21,17 @@ void darr_init(darr_t *a)
  * @warning Calls @c realloc and may move the buffer, invalidating any pointer
  *          previously obtained from @ref darr_get. Internal helper for
  *          @ref darr_push.
+ * @return 0, or -1 if the allocation fails (the array is then unchanged).
  */
-static void darr_grow(darr_t *a)
+static int darr_grow(darr_t *a)
 {
+    if (a->cap > INT_MAX / 2) return -1;
     int new_cap = (a->cap == 0) ? 4 : a->cap * 2;
-    a->data = realloc(a->data, (size_t)new_cap * sizeof(void *));
+    void **p = realloc(a->data, (size_t)new_cap * sizeof(void *));
+    if (!p) return -1;
+    a->data = p;
     a->cap  = new_cap;
+    return 0;
 }
 
 /**
@@ -38,10 +44,11 @@ static void darr_grow(darr_t *a)
  *       valid). @p item may be NULL -- this container does not use NULL as a
  *       sentinel.
  */
-void darr_push(darr_t *a, void *item)
+int darr_push(darr_t *a, void *item)
 {
-    if (a->size == a->cap) darr_grow(a);
+    if (a->size == a->cap && darr_grow(a) != 0) return -1;   /* item not stored */
     a->data[a->size++] = item;
+    return 0;
 }
 
 /**

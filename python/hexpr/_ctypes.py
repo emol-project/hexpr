@@ -183,6 +183,18 @@ def _load() -> ctypes.CDLL:
                                       POINTER(ctypes.c_uint64),
                                       POINTER(c_double)]
 
+    # --- rank-1 (spin-dependent) one-electron operators ---
+    lib.hexpr_rank1_max_terms.restype  = c_int
+    lib.hexpr_rank1_max_terms.argtypes = [c_int]
+    lib.hexpr_rank1_pair.restype  = c_int
+    lib.hexpr_rank1_pair.argtypes = [c_int,
+                                     POINTER(ctypes.c_uint8),
+                                     POINTER(ctypes.c_uint8),
+                                     POINTER(c_int),
+                                     POINTER(ctypes.c_int32),
+                                     POINTER(ctypes.c_int32),
+                                     POINTER(c_double)]
+
     # --- show (dump to a C FILE* stream) ---
     lib.hexpr_drt_show.restype  = c_int
     lib.hexpr_drt_show.argtypes = [DrtHandle, c_void_p]

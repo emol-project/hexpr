@@ -353,6 +353,38 @@ void hexpr_csf_to_dets_(const hexpr_drt_t **drt, const int *index,
                                           out_alpha, out_beta, out_coef);
 }
 
+/* ===== Spin-dependent one-electron operators (rank 1) ========= */
+
+/** @brief Fortran binding for @ref hexpr_rank1_max_terms. */
+void hexpr_rank1_max_terms_(const int *norb, int *out_max)
+{
+    *out_max = hexpr_rank1_max_terms(*norb);
+}
+
+/**
+ * @brief Fortran binding for @ref hexpr_rank1_pair.
+ * @param norb orbital count (by reference).
+ * @param bra_steps,ket_steps step codes 0..3, length @c norb.
+ * @param[out] out_count terms written. @param[out] out_p,out_q orbitals.
+ * @param[out] out_R reduced matrix elements. @param[out] out_status status as
+ *        @c int.
+ * @note The orbital indices are emitted 0-based, like pqrs in the pair
+ *       bindings; add 1 in Fortran. Size the outputs with
+ *       @ref hexpr_rank1_max_terms_.
+ */
+void hexpr_rank1_pair_(const int *norb,
+                       const signed char *bra_steps,
+                       const signed char *ket_steps,
+                       int *out_count,
+                       int32_t *out_p, int32_t *out_q,
+                       double *out_R, int *out_status)
+{
+    *out_status = (int)hexpr_rank1_pair(*norb,
+                                        (const unsigned char *)bra_steps,
+                                        (const unsigned char *)ket_steps,
+                                        out_count, out_p, out_q, out_R);
+}
+
 /* ===== Per-pair / block / subspace =========================== */
 
 /**

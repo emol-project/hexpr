@@ -276,6 +276,29 @@ static double lk_value(lk_table_t *T, int gf, int ff, int hf,
     return v;
 }
 
+/**
+ * @brief L(k) for callers outside the DRT walk -- the rank-1 pair evaluator
+ *        (csf/csf_rank1.c), which multiplies L_j along two step vectors.
+ *
+ * Same thread-local table and same hmlkva as @ref lk_value, filled on a miss.
+ * It is not part of a two-phase walk, so it counts nothing; and it stops
+ * caching when the table is nearly full instead of letting lk_put abort, since
+ * spin-dependent chains (theta up to 3, spins up to 2S = 14) reach more keys
+ * than the spin-free walks the table was sized for. The caller keeps every
+ * argument inside the lk_pack radices (psi, phi <= 15).
+ */
+double hexpr_lk_value_direct(int gf, int ff, int hf,
+                             int psi, int phi, int theta, int theta_prev)
+{
+    hexpr_lk_ensure_init();
+    uint32_t key = lk_pack(gf, ff, hf, psi, phi, theta, theta_prev);
+    double v;
+    if (lk_get(&LK, key, &v)) return v;
+    v = hmlkva(gf, ff, hf, psi, phi, theta, theta_prev);
+    if ((uint32_t)LK.size < LK_MAX_LOAD - 256u) lk_put(&LK, key, v);
+    return v;
+}
+
 /* ------------------------------------------------------------------ */
 /* Record hash for loop deduplication in tree_search                   */
 /* Uses FNV-1a 64-bit on (bottom, top, max_w, min_w, ij0..3)          */
@@ -334,7 +357,8 @@ static uint64_t fnv64(const int *arr, int n)
  * @param ijkl   orbital-index array of the loop.
  * @param nijkl  number of valid entries in @p ijkl.
  * @return 1 if the loop was already present (caller should skip it), 0 if it was
- *         new (now recorded).
+ *         new (now recorded), -1 if it was new but could not be recorded
+ *         (allocation failure; the caller reports out of memory).
  * @note The key is @c (bottom, top, max(wg,wf), min(wg,wf), ijkl...) so the two
  *       path weights are compared symmetrically. New nodes come from the inline
  *       pool until it is exhausted, then from @c malloc (freed by @ref rhash_reset).
@@ -353,13 +377,13 @@ static int rhash_has_or_add(rhash_t *r, int bottom, int top,
     for (rnode_t *n = r->buckets[slot]; n; n = n->next)
         if (n->h == h) return 1;  /* found */
     /* insert */
-    if (r->buckets[slot] == NULL)
-        r->touched[r->ntouched++] = (uint16_t)slot;
     rnode_t *n;
     if (r->pool_used < 256)
         n = &r->pool[r->pool_used++];
-    else
-        n = malloc(sizeof(rnode_t));
+    else if ((n = malloc(sizeof(rnode_t))) == NULL)
+        return -1;
+    if (r->buckets[slot] == NULL)
+        r->touched[r->ntouched++] = (uint16_t)slot;
     n->h = h;
     n->next = r->buckets[slot];
     r->buckets[slot] = n;
@@ -405,12 +429,19 @@ static void rhash_reset(rhash_t *r, int pool_limit)
  * @note Stores a copy of @c *e (the vector does not alias caller storage). May
  *       @c realloc and move @c v->data, doubling capacity. Backing append used
  *       both per-node and for the merged result in @ref calc_TensorOp_average.
+ *       On allocation failure it sets the vector's sticky @c oom flag and
+ *       stores nothing (see expr_internal.h).
  */
 static void le_push(le_vec_t *v, const loop_element_t *e)
 {
+    if (v->oom) return;
     if (v->size == v->cap) {
-        v->cap = v->cap ? v->cap * 2 : 16;
-        v->data = realloc(v->data, v->cap * sizeof(loop_element_t));
+        if (v->cap > VEC_CAP_MAX) { v->oom = 1; return; }
+        int nc = v->cap ? v->cap * 2 : 16;
+        loop_element_t *p = realloc(v->data, (size_t)nc * sizeof(loop_element_t));
+        if (!p) { v->oom = 1; return; }
+        v->data = p;
+        v->cap  = nc;
     }
     v->data[v->size++] = *e;
 }
@@ -497,23 +528,27 @@ static int le_cmp_top(const void *a, const void *b)
 static _Thread_local const unsigned char *W_g = NULL, *W_f = NULL;
 static _Thread_local int *W_ng = NULL, *W_nf = NULL;   /* node of each walk at level k */
 
-void hexpr_loopgen_set_walks(const hexpr_drt_t *drt,
-                             const unsigned char *want_g,
-                             const unsigned char *want_f)
+int hexpr_loopgen_set_walks(const hexpr_drt_t *drt,
+                            const unsigned char *want_g,
+                            const unsigned char *want_f)
 {
     free(W_ng); free(W_nf);
     W_ng = W_nf = NULL;
     W_g = W_f = NULL;
-    if (drt == NULL || want_g == NULL || want_f == NULL) return;
+    if (drt == NULL || want_g == NULL || want_f == NULL) return 0;
     int norb = hexpr_drt_norb(drt), nnodes = hexpr_drt_nnodes(drt);
     int bottom = -1;
     for (int i = 0; i < nnodes && bottom < 0; i++)
         if (hexpr_drt_orb(drt, i) == 0) bottom = i;
+    if (bottom < 0) return 0;                /* fall back to the full search */
     W_ng = malloc((size_t)(norb + 1) * sizeof(int));
     W_nf = malloc((size_t)(norb + 1) * sizeof(int));
-    if (bottom < 0 || W_ng == NULL || W_nf == NULL) {
+    if (W_ng == NULL || W_nf == NULL) {
+        /* Not a silent fallback: the unrestricted single direction is not
+         * byte-identical to the restricted one (see above), so the caller
+         * reports out of memory instead. */
         free(W_ng); free(W_nf); W_ng = W_nf = NULL;
-        return;                              /* fall back to the full search */
+        return -1;
     }
     W_ng[0] = W_nf[0] = bottom;
     for (int k = 0; k < norb; k++) {
@@ -522,6 +557,7 @@ void hexpr_loopgen_set_walks(const hexpr_drt_t *drt,
     }
     W_g = want_g;
     W_f = want_f;
+    return 0;
 }
 
 /* The thread-local state a search reads, fetched once per
@@ -546,6 +582,8 @@ static void tree_search(const hexpr_drt_t *drt, int bottom,
                         le_vec_t *expr, rhash_t *record,
                         int norb, const search_ctx_t *sc)
 {
+    /* Out of memory earlier in this search: stop (the caller reports it). */
+    if (expr->oom) return;
     /* Walk constraint: only the given bra (g) / ket (f) steps at this orbital. */
     if (sc->wg != NULL && (gf - 1 != sc->wg[k] || ff - 1 != sc->wf[k]))
         return;
@@ -586,8 +624,10 @@ static void tree_search(const hexpr_drt_t *drt, int bottom,
             /* loop closed */
             /* All operators placed and the walks rejoined: emit one loop element,
              * unless this exact loop signature was already recorded. */
-            if (!rhash_has_or_add(record, bottom, ng[k1],
-                                  wg[k1], wf[k1], ijkl, *nijkl)) {
+            int seen = rhash_has_or_add(record, bottom, ng[k1],
+                                        wg[k1], wf[k1], ijkl, *nijkl);
+            if (seen < 0) expr->oom = 1;
+            if (seen == 0) {
                 loop_element_t le;
                 le.bottom   = bottom;
                 le.top      = ng[k1];
@@ -690,16 +730,21 @@ le_vec_t calc_TensorOp_average(const hexpr_drt_t *drt,
     int s_ng[LOCAL_NORB + 1], s_nf[LOCAL_NORB + 1], s_wg[LOCAL_NORB + 1], s_wf[LOCAL_NORB + 1];
     double s_mk[LOCAL_NORB + 1];
     int on_heap = norb > LOCAL_NORB;
-    int *ng = on_heap ? malloc((norb+1) * sizeof(int)) : s_ng;
-    int *nf = on_heap ? malloc((norb+1) * sizeof(int)) : s_nf;
-    int *wg = on_heap ? malloc((norb+1) * sizeof(int)) : s_wg;
-    int *wf = on_heap ? malloc((norb+1) * sizeof(int)) : s_wf;
-    double *mk = on_heap ? malloc((norb+1) * sizeof(double)) : s_mk;
+    int *ng = on_heap ? malloc((size_t)(norb+1) * sizeof(int)) : s_ng;
+    int *nf = on_heap ? malloc((size_t)(norb+1) * sizeof(int)) : s_nf;
+    int *wg = on_heap ? malloc((size_t)(norb+1) * sizeof(int)) : s_wg;
+    int *wf = on_heap ? malloc((size_t)(norb+1) * sizeof(int)) : s_wf;
+    double *mk = on_heap ? malloc((size_t)(norb+1) * sizeof(double)) : s_mk;
+
+    le_vec_t all_expr = {NULL, 0, 0, 0};
+    if (!ng || !nf || !wg || !wf || !mk) {
+        free(ng); free(nf); free(wg); free(wf); free(mk);   /* on_heap only */
+        all_expr.oom = 1;
+        return all_expr;
+    }
 
     int  ijkl[4];
     int  nijkl;
-
-    le_vec_t all_expr = {NULL, 0, 0};
     rhash_t  record;
 
     int iop = 0;
@@ -717,7 +762,7 @@ le_vec_t calc_TensorOp_average(const hexpr_drt_t *drt,
         if (sc.wg != NULL && (w_ng[orb_i] != inode || w_nf[orb_i] != inode))
             continue;
 
-        le_vec_t expr = {NULL, 0, 0};
+        le_vec_t expr = {NULL, 0, 0, 0};
 
         /* Seed both walks at this start node: same node, zero path weights,
          * unit product, empty orbital-index stack. */
@@ -739,17 +784,25 @@ le_vec_t calc_TensorOp_average(const hexpr_drt_t *drt,
                         mk, ijkl, &nijkl, origin, &expr, &record, norb, &sc);
 
         /* sort by .top (ascending) -- stable sort, matches Ruby x.top-y.top */
-        hexpr_stable_sort(expr.data, expr.size, sizeof(loop_element_t), le_cmp_top);
+        if (expr.oom ||
+            hexpr_stable_sort(expr.data, expr.size, sizeof(loop_element_t), le_cmp_top) != 0)
+            all_expr.oom = 1;
 
         /* append to all_expr */
-        for (int i = 0; i < expr.size; i++)
+        for (int i = 0; i < expr.size && !all_expr.oom; i++)
             le_push(&all_expr, &expr.data[i]);
 
         /* Release this node's scratch; rhash_reset frees only heap overflow. */
         free(expr.data);
         rhash_reset(&record, record.pool_used);
+        if (all_expr.oom) break;
     }
 
     if (on_heap) { free(ng); free(nf); free(wg); free(wf); free(mk); }
+    if (all_expr.oom) {
+        free(all_expr.data);
+        all_expr.data = NULL;
+        all_expr.size = all_expr.cap = 0;
+    }
     return all_expr;
 }

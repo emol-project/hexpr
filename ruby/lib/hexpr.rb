@@ -140,6 +140,12 @@ module HExpr
   attach_function :hexpr_subspace_max_terms,
                   [:pointer, :int, :int, :pointer], :int
 
+  # rank-1 one-electron operators (since 1.2)
+  attach_function :hexpr_rank1_max_terms, [:int], :int
+  attach_function :hexpr_rank1_pair,
+                  [:int, :pointer, :pointer, :pointer,
+                   :pointer, :pointer, :pointer], :int
+
   module_function
 
   def init
@@ -193,6 +199,32 @@ module HExpr
     end
     sub = Drt.from_csfset([bra_steps.to_a, ket_steps.to_a], norb)
     sub.pair_eval_full(0, 1, which: which)
+  end
+
+  # Reduced matrix elements R_pq = <S'||(a+_p a~_q)^1||S> of the one-electron
+  # triplet operators between a bra and a ket CSF given as step codes (since
+  # 1.2). The two CSFs may have different total spin; no DRT is built.
+  # Convention (Edmonds): <S'M'|T^1_m(pq)|SM> = (-1)^(S'-M') (S' 1 S; -M' m M) R_pq;
+  # the one-electron spin density is s_m(pq) = -T^1_m(pq)/sqrt(2). See
+  # hexpr_rank1_pair in hexpr.h. Returns [p, q, r], 0-based orbitals.
+  def rank1_pair(bra_steps, ket_steps)
+    norb = bra_steps.size
+    unless ket_steps.size == norb
+      raise ArgumentError, "ket_steps length #{ket_steps.size} != norb #{norb}"
+    end
+    nmax = [hexpr_rank1_max_terms(norb), 1].max
+    bra = FFI::MemoryPointer.new(:uint8, [norb, 1].max)
+    ket = FFI::MemoryPointer.new(:uint8, [norb, 1].max)
+    bra.write_array_of_uint8(bra_steps.to_a)
+    ket.write_array_of_uint8(ket_steps.to_a)
+    p = FFI::MemoryPointer.new(:int32, nmax)
+    q = FFI::MemoryPointer.new(:int32, nmax)
+    r = FFI::MemoryPointer.new(:double, nmax)
+    n = FFI::MemoryPointer.new(:int)
+    status = hexpr_rank1_pair(norb, bra, ket, n, p, q, r)
+    raise "hexpr_rank1_pair failed: #{last_error}" unless status == HEXPR_OK
+    k = n.read_int
+    [p.read_array_of_int32(k), q.read_array_of_int32(k), r.read_array_of_double(k)]
   end
 
   def csf_block_eval(bra_csfs, ket_csfs, which: :full)

@@ -33,6 +33,7 @@
 #include "brooks_table.h"
 #include "fmt.h"
 #include "dhash.h"
+#include "hexpr_error.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -137,6 +138,8 @@ static void free_ct(void *p) { free(p); }
  * @param na      number of orbital indices the key is built from (2 or 4).
  * @return a freshly-allocated ::ct_vec_t sorted by (ij_key, seq_num); the caller
  *         owns @c out.data. Empty (NULL data) when nothing survived the threshold.
+ *         On allocation failure (or an input vector marked @c oom) the result
+ *         is empty with @c oom set.
  *
  * @note Side effect: writes each visited element's @c seq_num field, mirroring
  *       the in-place mutation the Ruby reference performs on its loop elements.
@@ -147,11 +150,16 @@ static ct_vec_t add_expr(const hexpr_drt_t *drt,
 {
     int norb  = hexpr_drt_norb(drt);
     int n_oel = norb * (norb + 1) / 2;
+    ct_vec_t out = {NULL, 0, 0, 0};
+
+    for (int i = 0; i < nvec; i++)
+        if (le_vecs[i].oom) { out.oom = 1; return out; }
 
     /* Hash table keyed by (ij_key, seq_num); values are heap comp_term_t.
      * Using a hash here is what makes the accumulation O(elements) rather than
      * an O(n^2) search for an existing term at the same address. */
     dhash_t *h = dhash_create();
+    if (!h) { out.oom = 1; return out; }
 
     /* Outer loop: one input vector per tensor product, sharing scalar coef[i].
      * Inner loop: every loop element produced by the DRT walk for that product. */
@@ -211,10 +219,9 @@ static ct_vec_t add_expr(const hexpr_drt_t *drt,
                  * If the running sum cancels below threshold, evict the entry
                  * entirely so it never reaches the output. */
                 existing->value += coef[i] * x->value;
-                /* apply threshold */
-                if (fabs(existing->value) > 1e-5)
-                    dhash_set(h, key, existing);
-                else {
+                /* apply threshold (the key is already stored: nothing to
+                 * re-insert, so no allocation can fail on this branch) */
+                if (!(fabs(existing->value) > 1e-5)) {
                     free(existing);
                     dhash_delete(h, key);
                 }
@@ -223,6 +230,7 @@ static ct_vec_t add_expr(const hexpr_drt_t *drt,
                  * element's endpoints/weights, and insert only if it already
                  * clears the threshold (a single tiny term is never stored). */
                 comp_term_t *y = malloc(sizeof(comp_term_t));
+                if (!y) { out.oom = 1; goto done; }
                 y->ij_key   = ij_key;
                 y->seq_num  = seq_num;
                 y->bottom   = x->bottom;
@@ -231,9 +239,13 @@ static ct_vec_t add_expr(const hexpr_drt_t *drt,
                 y->weight_f = x->weight_f;
                 y->value    = coef[i] * x->value;
                 /* threshold: |y->value| must be > 1e-5 */
-                if (fabs(y->value) > 1e-5)
-                    dhash_set(h, key, y);
-                else
+                if (fabs(y->value) > 1e-5) {
+                    if (dhash_set(h, key, y) != 0) {
+                        free(y);
+                        out.oom = 1;
+                        goto done;
+                    }
+                } else
                     free(y);
             }
         }
@@ -241,28 +253,38 @@ static ct_vec_t add_expr(const hexpr_drt_t *drt,
 
     /* Drain phase: the hash now holds exactly the surviving terms. Snapshot
      * its live entries into a flat array, sort into canonical (ij_key, seq_num)
-     * order, then release the hash (values freed via @ref free_ct). */
+     * order, then release the hash (values freed via @ref free_ct). The keys
+     * are not needed, so only the values are collected. */
     /* collect, sort by (ij_key, seq_num), and free hash */
-    int n = dhash_size(h);
-    ct_vec_t out = {NULL, 0, 0};
-    if (n > 0) {
-        dhash_key_t *keys = malloc(n * sizeof(dhash_key_t));
-        void **vals       = malloc(n * sizeof(void *));
-        dhash_to_array(h, keys, vals);
+    {
+        int n = dhash_size(h);
+        if (n > 0) {
+            void **vals = malloc((size_t)n * sizeof(void *));
+            out.data    = malloc((size_t)n * sizeof(comp_term_t));
+            if (!vals || !out.data) {
+                free(vals);
+                out.oom = 1;
+                goto done;
+            }
+            dhash_to_array(h, NULL, vals);
+            out.size = n;
+            out.cap  = n;
+            for (int i = 0; i < n; i++)
+                out.data[i] = *(comp_term_t *)vals[i];
+            free(vals);
 
-        out.data = malloc(n * sizeof(comp_term_t));
-        out.size = n;
-        out.cap  = n;
-        for (int i = 0; i < n; i++)
-            out.data[i] = *(comp_term_t *)vals[i];
-
-        /* sort by [ij_key, seq_num] -- stable; ties impossible since keys unique */
-        hexpr_stable_sort(out.data, out.size, sizeof(comp_term_t), ct_cmp_key);
-
-        free(keys);
-        free(vals);
+            /* sort by [ij_key, seq_num] -- stable; ties impossible since keys unique */
+            if (hexpr_stable_sort(out.data, out.size, sizeof(comp_term_t), ct_cmp_key) != 0)
+                out.oom = 1;
+        }
     }
+done:
     dhash_free(h, free_ct);
+    if (out.oom) {
+        free(out.data);
+        out.data = NULL;
+        out.size = out.cap = 0;
+    }
     return out;
 }
 
@@ -294,6 +316,7 @@ static int ot_cmp_ij(const void *a, const void *b)
  * @param drt fully-built DRT (source of the path-weight lists).
  * @param v   sorted compressed terms from @ref add_expr / @ref brooks_all.
  * @return a freshly-allocated ::ot_vec_t sorted by @c ij; caller owns @c out.data.
+ *         On allocation failure it is empty with @c oom set.
  *
  * @note The nested @c lx / @c uy loops are a Cartesian product over the two
  *       weight lists -- term count grows as @c nlw*nuw per input term. Endpoints
@@ -311,9 +334,9 @@ static int ot_cmp_ij(const void *a, const void *b)
  */
 static ot_vec_t expand_expr(const hexpr_drt_t *drt, const ct_vec_t *v)
 {
-    ot_vec_t out = {NULL, 0, 0};
+    ot_vec_t out = {NULL, 0, 0, 0};
 
-    for (int i = 0; i < v->size; i++) {
+    for (int i = 0; i < v->size && !out.oom; i++) {
         const comp_term_t *t = &v->data[i];
         int nlw, nuw;
         const int *lw = hexpr_drt_lower_path_weights(drt, t->bottom, &nlw);
@@ -334,7 +357,13 @@ static ot_vec_t expand_expr(const hexpr_drt_t *drt, const ct_vec_t *v)
         }
     }
 
-    hexpr_stable_sort(out.data, out.size, sizeof(out_term_t), ot_cmp_ij);
+    if (out.oom ||
+        hexpr_stable_sort(out.data, out.size, sizeof(out_term_t), ot_cmp_ij) != 0) {
+        free(out.data);
+        out.data = NULL;
+        out.size = out.cap = 0;
+        out.oom  = 1;
+    }
     return out;
 }
 
@@ -349,19 +378,25 @@ static ot_vec_t expand_expr(const hexpr_drt_t *drt, const ct_vec_t *v)
  * @param all destination accumulator (ownership of its buffer stays with it).
  * @param src source vector; consumed -- its @c data is freed and it is reset.
  * @note "Move", not copy: @p src is left empty so its buffer is never
- *       double-freed by the caller.
+ *       double-freed by the caller. An out-of-memory @p src, or a failure to
+ *       grow @p all, marks @p all @c oom (the sticky flag of expr_internal.h).
  */
 static void append_ct(ct_vec_t *all, ct_vec_t *src)
 {
-    for (int i = 0; i < src->size; i++) {
+    if (src->oom) all->oom = 1;
+    for (int i = 0; i < src->size && !all->oom; i++) {
         if (all->size == all->cap) {
-            all->cap = all->cap ? all->cap * 2 : 256;
-            all->data = realloc(all->data, all->cap * sizeof(comp_term_t));
+            if (all->cap > VEC_CAP_MAX) { all->oom = 1; break; }
+            int nc = all->cap ? all->cap * 2 : 256;
+            comp_term_t *p = realloc(all->data, (size_t)nc * sizeof(comp_term_t));
+            if (!p) { all->oom = 1; break; }
+            all->data = p;
+            all->cap  = nc;
         }
         all->data[all->size++] = src->data[i];
     }
     free(src->data);
-    src->data = NULL; src->size = src->cap = 0;
+    src->data = NULL; src->size = src->cap = 0; src->oom = 0;
 }
 
 /* Allocate a tensor product from literal initializers */
@@ -415,8 +450,10 @@ static void bc_init_constants(void)
  * real L(k) on a miss, the running product / threshold pruning is identical to
  * the search pass, so the tree shape -- and hence the key set -- matches exactly:
  * the search pass then finds every key present (misses==0).
+ * @return 0, or -1 if a walk ran out of memory (the warm pass is then
+ *         incomplete and the caller reports out of memory).
  */
-static void warm_lk_table(const hexpr_drt_t *drt)
+static int warm_lk_table(const hexpr_drt_t *drt)
 {
     for (int c = 0; c < N_BROOKS_CASES; c++) {
         const brooks_case_t *bc = &BROOKS_CASES[c];
@@ -429,8 +466,10 @@ static void warm_lk_table(const hexpr_drt_t *drt)
                 bc->ops[o].theta[2], bc->ops[o].theta[3]);
             le_vec_t ev = CALC(drt, tp, bc->origin);   /* hot line fills LK (GENERATE) */
             free(ev.data);                             /* discard the walk result */
+            if (ev.oom) return -1;
         }
     }
+    return 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -448,7 +487,9 @@ static void warm_lk_table(const hexpr_drt_t *drt)
  * @c ij_key alone and hand it to @ref expand_expr for the path-weight fan-out.
  *
  * @param drt fully-built DRT to evaluate.
- * @return the expanded, ij-sorted ::ot_vec_t; caller owns @c .data.
+ * @return the expanded, ij-sorted ::ot_vec_t; caller owns @c .data. On
+ *         allocation failure it is empty with @c oom set; the L(k) phase is
+ *         left OFF either way.
  *
  * The enabled-row order reproduces the previous hand-written emission order
  * exactly: case01, case02, case1..case8, case10..case14. Each term maps 1:1 to a
@@ -471,13 +512,17 @@ static ot_vec_t brooks_all(const hexpr_drt_t *drt)
      * enable_pair rows (incl. case03) on per-pair sub-DRTs and legitimately needs
      * keys warm never filled, so it stays in OFF (fill-on-miss, uncounted) -- that
      * is correct, not a failure. Do not force the pair path through warm. */
+    ct_vec_t flat = {NULL, 0, 0, 0};
+    ot_vec_t fail = {NULL, 0, 0, 1};
+
     hexpr_lk_begin_generation();
-    warm_lk_table(drt);
+    if (warm_lk_table(drt) != 0) {
+        hexpr_lk_finish();
+        return fail;
+    }
     hexpr_lk_begin_search();
 
-    ct_vec_t flat = {NULL, 0, 0};
-
-    for (int c = 0; c < N_BROOKS_CASES; c++) {          /* cases */
+    for (int c = 0; c < N_BROOKS_CASES && !flat.oom; c++) {   /* cases */
         const brooks_case_t *bc = &BROOKS_CASES[c];
         if (!bc->enable_whole) continue;               /* skips case03 and case9 */
 
@@ -490,10 +535,11 @@ static ot_vec_t brooks_all(const hexpr_drt_t *drt)
                 bc->ops[o].theta[0], bc->ops[o].theta[1],
                 bc->ops[o].theta[2], bc->ops[o].theta[3]);
             ev[o] = CALC(drt, tp, bc->origin);
+            if (ev[o].oom) flat.oom = 1;
         }
 
         /* Each term = one add_expr over the ops it selects. */
-        for (int t = 0; t < bc->nterms; t++) {         /* terms */
+        for (int t = 0; t < bc->nterms && !flat.oom; t++) {   /* terms */
             const brooks_term_t *tm = &bc->terms[t];
             le_vec_t sel[BC_MAX_OPS];
             for (int i = 0; i < tm->n_op_indices; i++)
@@ -512,7 +558,11 @@ static ot_vec_t brooks_all(const hexpr_drt_t *drt)
 
     /* final stable sort by ij_key only -- matches Ruby: a.sort{ |x,y| x[0][0] - y[0][0] }
      * within equal ij_key groups the per-case (ij_key,seq_num) order is preserved */
-    hexpr_stable_sort(flat.data, flat.size, sizeof(comp_term_t), ct_cmp_ij_only);
+    if (flat.oom ||
+        hexpr_stable_sort(flat.data, flat.size, sizeof(comp_term_t), ct_cmp_ij_only) != 0) {
+        free(flat.data);
+        return fail;
+    }
 
     ot_vec_t out = expand_expr(drt, &flat);
     free(flat.data);
@@ -545,7 +595,8 @@ struct hexpr_expr {
  * @param drt fully-built DRT to evaluate.
  * @return a heap ::hexpr_expr_t; release with @ref hexpr_expr_destroy (the
  *         name declared in @c hexpr.h); @ref hexpr_expr_free is the internal
- *         implementation it forwards to.
+ *         implementation it forwards to. NULL if memory runs out (since 1.2;
+ *         @ref hexpr_last_error then says so).
  *
  * @note Each CSF row is stored with stride @c norb+1 (the trailing NUL is kept),
  *       so row @c i lives at @c csf_data + i*(norb+1).
@@ -553,6 +604,7 @@ struct hexpr_expr {
 hexpr_expr_t *hexpr_expr_build(const hexpr_drt_t *drt)
 {
     hexpr_expr_t *e = calloc(1, sizeof(hexpr_expr_t));
+    if (!e) goto oom;
     e->norb  = hexpr_drt_norb(drt);
     e->n_oel = e->norb * (e->norb + 1) / 2;
 
@@ -560,17 +612,23 @@ hexpr_expr_t *hexpr_expr_build(const hexpr_drt_t *drt)
      * into csf_data (stride norb+1) and free the per-row temporaries. */
     /* CSF list */
     char **csfs = NULL;
-    e->ncsf = hexpr_drt_mk_csf_list(drt, &csfs);
-    e->csf_data = malloc((size_t)(e->ncsf) * (e->norb + 1));
+    int ncsf = hexpr_drt_mk_csf_list(drt, &csfs);
+    if (ncsf < 0) goto oom;
+    e->ncsf = ncsf;
+    e->csf_data = malloc((size_t)e->ncsf * (size_t)(e->norb + 1) + 1);
     for (int i = 0; i < e->ncsf; i++) {
-        memcpy(e->csf_data + i * (e->norb + 1), csfs[i], e->norb + 1);
+        if (e->csf_data)
+            memcpy(e->csf_data + (size_t)i * (size_t)(e->norb + 1), csfs[i],
+                   (size_t)e->norb + 1);
         free(csfs[i]);
     }
     free(csfs);
+    if (!e->csf_data) goto oom;
 
     /* Run the full Brooks pipeline to obtain the ij-sorted output terms. */
     /* build expression */
     e->terms = brooks_all(drt);
+    if (e->terms.oom) goto oom;
 
     /* One pass to cache the one-electron term count (pqrs below the n_oel
      * boundary), so hexpr_expr_nterms_one / show_one need no rescan. */
@@ -581,6 +639,11 @@ hexpr_expr_t *hexpr_expr_build(const hexpr_drt_t *drt)
     e->n_one_terms = n_one;
 
     return e;
+
+oom:
+    hexpr_expr_free(e);
+    hexpr_set_error("hexpr_expr_build: out of memory");
+    return NULL;
 }
 
 /**

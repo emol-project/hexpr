@@ -519,7 +519,7 @@ class TestFullDecomposition:
                               ncore=0, nval=4, next_=0)
 
     def test_version(self):
-        assert hexpr.version() == "1.1.0"
+        assert hexpr.version() == "1.2.0"
 
     @pytest.mark.parametrize("which", ["full", "one"])
     def test_pair_eval_full_is_union_of_directions(self, which):

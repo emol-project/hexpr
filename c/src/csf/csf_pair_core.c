@@ -168,7 +168,11 @@ static ot_vec_t add_expr_pair(const hexpr_drt_t *drt,
     int norb  = hexpr_drt_norb(drt);
     int n_oel = norb * (norb + 1) / 2;
     int delta = bra - ket;
+    ot_vec_t out = {NULL, 0, 0, 0};
+    for (int vi = 0; vi < nvec; vi++)
+        if (le_vecs[vi]->oom) { out.oom = 1; return out; }
     dhash_t *h = dhash_create();
+    if (!h) { out.oom = 1; return out; }
 
     /* Outer: one input vector per tensor product, scaled by mul_coefs[vi].
      * Inner: every loop element produced for that product. */
@@ -225,23 +229,23 @@ static ot_vec_t add_expr_pair(const hexpr_drt_t *drt,
                 }
             } else if (fabs(val) > 1e-5) {
                 pair_term_t *y = malloc(sizeof(pair_term_t));
+                if (!y) { out.oom = 1; goto done; }
                 y->bottom   = x->bottom;
                 y->top      = x->top;
                 y->weight_g = x->weight_g;
                 y->weight_f = x->weight_f;
                 y->seq_num  = seq_num;
                 y->value    = val;
-                dhash_set(h, key, y);
+                if (dhash_set(h, key, y) != 0) { free(y); out.oom = 1; goto done; }
             }
         }
     }
 
-    ot_vec_t out = {NULL, 0, 0};
     int n = dhash_size(h);
     if (n > 0) {
-        dhash_key_t *keys = malloc(n * sizeof(dhash_key_t));
-        void **vals = malloc(n * sizeof(void *));
-        dhash_to_array(h, keys, vals);
+        void **vals = malloc((size_t)n * sizeof(void *));
+        if (!vals) { out.oom = 1; goto done; }
+        dhash_to_array(h, NULL, vals);
         int target_ij = triangle(bra, ket);
         /* Expansion pass: re-apply the path-weight==bra test to each surviving
          * term, emitting one output term (stamped with the global bra/ket ij)
@@ -260,10 +264,15 @@ static ot_vec_t add_expr_pair(const hexpr_drt_t *drt,
                 }
             }
         }
-        free(keys);
         free(vals);
     }
+done:
     dhash_free(h, free_pt);
+    if (out.oom) {
+        free(out.data);
+        out.data = NULL;
+        out.size = out.cap = 0;
+    }
     return out;
 }
 
@@ -276,9 +285,10 @@ static ot_vec_t add_expr_pair(const hexpr_drt_t *drt,
  */
 static void append_ot(ot_vec_t *all, ot_vec_t *src)
 {
+    if (src->oom) all->oom = 1;        /* sticky (expr_internal.h) */
     for (int i = 0; i < src->size; i++) ot_push(all, &src->data[i]);
     free(src->data);
-    src->data = NULL; src->size = src->cap = 0;
+    src->data = NULL; src->size = src->cap = 0; src->oom = 0;
 }
 
 /**
@@ -327,9 +337,9 @@ ot_vec_t pair_eval_internal(const hexpr_drt_t *drt, int bra, int ket)
      * ends in finish() (=> OFF), and the pair path never changes the phase, so the
      * table is always OFF on entry here; assert that invariant explicitly. */
     assert(hexpr_lk_phase() == LK_OFF);
-    ot_vec_t all = {NULL, 0, 0};
+    ot_vec_t all = {NULL, 0, 0, 0};
 
-    for (int c = 0; c < N_BROOKS_CASES; c++) {          /* cases */
+    for (int c = 0; c < N_BROOKS_CASES && !all.oom; c++) {   /* cases */
         const brooks_case_t *bc = &BROOKS_CASES[c];
         if (!bc->enable_pair) continue;                /* skips only case9 (case03 runs) */
 
@@ -342,10 +352,11 @@ ot_vec_t pair_eval_internal(const hexpr_drt_t *drt, int bra, int ket)
                 bc->ops[o].theta[0], bc->ops[o].theta[1],
                 bc->ops[o].theta[2], bc->ops[o].theta[3]);
             ev[o] = CALC(drt, tp, bc->origin);
+            if (ev[o].oom) all.oom = 1;
         }
 
         /* Each term = one add_expr_pair over the ops it selects. */
-        for (int t = 0; t < bc->nterms; t++) {         /* terms */
+        for (int t = 0; t < bc->nterms && !all.oom; t++) {   /* terms */
             const brooks_term_t *tm = &bc->terms[t];
             le_vec_t *sel[BC_MAX_OPS];
             for (int i = 0; i < tm->n_op_indices; i++)
@@ -358,6 +369,11 @@ ot_vec_t pair_eval_internal(const hexpr_drt_t *drt, int bra, int ket)
         }
 
         for (int o = 0; o < bc->nops; o++) free(ev[o].data);
+    }
+    if (all.oom) {                     /* out of memory: empty, flagged */
+        free(all.data);
+        all.data = NULL;
+        all.size = all.cap = 0;
     }
     return all;   /* NO final sort: ij is constant (triangle(bra,ket)) per pair,
                    * so emission order is the output order. */

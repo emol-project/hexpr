@@ -13,11 +13,11 @@
 
 /**
  * @brief Return the library's semantic version as a string.
- * @return pointer to a static string literal (e.g. "1.1.0"); the caller must
+ * @return pointer to a static string literal (e.g. "1.2.0"); the caller must
  *         NOT free or modify it.
  * @note Thread-safe: returns a constant, holds no state.
  */
-const char *hexpr_version_string(void) { return "1.1.0"; }
+const char *hexpr_version_string(void) { return "1.2.0"; }
 
 /** @brief Major version component (from @c HEXPR_VERSION_MAJOR). @return int. */
 int         hexpr_version_major(void)  { return HEXPR_VERSION_MAJOR; }

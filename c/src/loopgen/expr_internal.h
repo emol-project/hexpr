@@ -40,6 +40,10 @@ long hexpr_lk_search_wig_calls(void); /* SEARCH-phase wigner_9j calls (assert 0)
 long hexpr_lk_search_mel_calls(void); /* SEARCH-phase matrix_el calls (assert 0) */
 long hexpr_lk_off_fills(void);        /* OFF-phase (pair) fill-on-miss count */
 long hexpr_lk_table_size(void);       /* live keys in the shared table */
+/* L(k) outside the DRT walk (rank-1 pair evaluator): same table, fill on miss,
+ * no SEARCH accounting; stops caching instead of aborting when nearly full. */
+double hexpr_lk_value_direct(int gf, int ff, int hf,
+                             int psi, int phi, int theta, int theta_prev);
 
 /* ---- Tensor product (from Ruby TensorProduct) ---- */
 typedef struct {
@@ -71,11 +75,21 @@ typedef struct {
     int    origin;
 } loop_element_t;
 
+/* ---- Out-of-memory convention for the growable vectors below (since 1.2) ----
+ * Each vector carries a sticky `oom` flag. A push that cannot grow the buffer
+ * sets it and stores nothing; later pushes are no-ops. The owner checks the
+ * flag once at the end of a stage, frees `data` and reports HEXPR_ERR_OOM, so
+ * nothing ever writes through a failed allocation. A zero-initialized vector
+ * ({NULL, 0, 0} or {0}) has oom == 0. Growth doubles the capacity and keeps
+ * it below 2^30 elements so that it stays an int. */
+#define VEC_CAP_MAX (1 << 29)
+
 /* ---- Dynamic array of loop_element_t ---- */
 typedef struct {
     loop_element_t *data;
     int             size;
     int             cap;
+    int             oom;   /* sticky: a push failed (see above) */
 } le_vec_t;
 
 /* ---- Compressed expression term ---- */
@@ -92,27 +106,36 @@ typedef struct {
     comp_term_t *data;
     int          size;
     int          cap;
+    int          oom;   /* sticky: a push failed */
 } ct_vec_t;
 
 static inline void ct_push(ct_vec_t *v, const comp_term_t *t)
 {
+    if (v->oom) return;
     if (v->size == v->cap) {
-        v->cap = v->cap ? v->cap * 2 : 64;
-        v->data = realloc(v->data, v->cap * sizeof(comp_term_t));
+        if (v->cap > VEC_CAP_MAX) { v->oom = 1; return; }
+        int nc = v->cap ? v->cap * 2 : 64;
+        comp_term_t *p = realloc(v->data, (size_t)nc * sizeof(comp_term_t));
+        if (!p) { v->oom = 1; return; }
+        v->data = p;
+        v->cap  = nc;
     }
     v->data[v->size++] = *t;
 }
 
 /* ---- Functions implemented in expr_tree.c ---- */
+/* On allocation failure the result has oom == 1 and data == NULL. */
 le_vec_t calc_TensorOp_average(const hexpr_drt_t *drt,
                                 const tensor_product_t *tp, int origin);
 
 /* Restrict calc_TensorOp_average to loops whose g walk follows want_g and
  * whose f walk follows want_f (step codes 0..3 per orbital, over drt); NULL
- * clears the restriction. Used by the single-pair path (csf_pair.c). */
-void hexpr_loopgen_set_walks(const hexpr_drt_t *drt,
-                             const unsigned char *want_g,
-                             const unsigned char *want_f);
+ * clears the restriction. Used by the single-pair path (csf_pair.c).
+ * Returns 0, or -1 if the restriction cannot be allocated (it is then
+ * cleared; the caller must not run the restricted search). */
+int hexpr_loopgen_set_walks(const hexpr_drt_t *drt,
+                            const unsigned char *want_g,
+                            const unsigned char *want_f);
 
 /* ---- Final expanded term (for output) ---- */
 typedef struct {
@@ -129,13 +152,19 @@ typedef struct {
     out_term_t *data;
     int         size;
     int         cap;
+    int         oom;   /* sticky: a push failed */
 } ot_vec_t;
 
 static inline void ot_push(ot_vec_t *v, const out_term_t *t)
 {
+    if (v->oom) return;
     if (v->size == v->cap) {
-        v->cap = v->cap ? v->cap * 2 : 256;
-        v->data = realloc(v->data, v->cap * sizeof(out_term_t));
+        if (v->cap > VEC_CAP_MAX) { v->oom = 1; return; }
+        int nc = v->cap ? v->cap * 2 : 256;
+        out_term_t *p = realloc(v->data, (size_t)nc * sizeof(out_term_t));
+        if (!p) { v->oom = 1; return; }
+        v->data = p;
+        v->cap  = nc;
     }
     v->data[v->size++] = *t;
 }

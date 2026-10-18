@@ -84,6 +84,15 @@ void hexpr_csf_to_dets_(const hexpr_drt_t **drt, const int *index,
                         uint64_t *out_alpha, uint64_t *out_beta,
                         double *out_coef, int *out_status);
 
+/* ===== Spin-dependent one-electron operators (rank 1) ========= */
+void hexpr_rank1_max_terms_(const int *norb, int *out_max);
+void hexpr_rank1_pair_(const int *norb,
+                       const signed char *bra_steps,
+                       const signed char *ket_steps,
+                       int *out_count,
+                       int32_t *out_p, int32_t *out_q,
+                       double *out_R, int *out_status);
+
 /* ===== Per-pair / block / subspace =========================== */
 void hexpr_pair_count_(const hexpr_drt_t **drt,
                        const int *bra, const int *ket,
